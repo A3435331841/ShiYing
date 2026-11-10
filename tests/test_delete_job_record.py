@@ -1,4 +1,5 @@
 import threading
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -71,3 +72,31 @@ def test_wechat_delete_rejects_active_and_preserves_media(tmp_path, monkeypatch)
     assert client.delete("/api/wechat/jobs/done").json() == {"deleted": True}
     assert media.read_bytes() == b"user media"
     assert [job["id"] for job in wechat.list_jobs()] == ["busy"]
+
+
+def test_thumbnail_cleanup_failure_does_not_fail_deletion(tmp_path, monkeypatch):
+    """记录删除成功后，缩略图清理失败（如被杀软锁定）不应把删除报为失败——
+    否则重试同一 job_id 会得到矛盾的 404。"""
+    from fastapi.testclient import TestClient
+
+    from app import main
+
+    job = DownloadJob(
+        id="thumb-stuck",
+        source_url="https://www.bilibili.com/video/BV1xx411c7mD",
+        platform=Platform.BILIBILI,
+        source_kind=SourceKind.ITEM,
+        output_root=str(tmp_path / "downloads"),
+    )
+    monkeypatch.setattr(
+        main.manager, "delete_job_record", lambda job_id: job
+    )
+
+    def refusing_unlink(self, missing_ok=False):
+        raise PermissionError("locked by antivirus")
+
+    monkeypatch.setattr(Path, "unlink", refusing_unlink)
+    client = TestClient(main.app, base_url="http://localhost")
+    response = client.delete("/api/jobs/thumb-stuck")
+    assert response.status_code == 200
+    assert response.json() == {"deleted": True}

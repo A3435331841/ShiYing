@@ -905,3 +905,28 @@ def test_stop_token_matches_rejects_non_ascii_without_error() -> None:
     assert _stop_token_matches("", "runtime_secret_") is False
     assert _stop_token_matches("café" + "d" * 32, "runtime_secret_" + "d" * 32) is False
     assert _stop_token_matches("wrong_" + "d" * 32, "runtime_secret_" + "d" * 32) is False
+
+
+def test_thumbnail_decodable_verdict_is_cached_per_file_state(tmp_path, monkeypatch):
+    """稳定的封面缓存命中不应每次请求都拉起 ffmpeg 解码；
+    文件重建（mtime/size 变化）后必须重新验证。"""
+    from app import main as main_module
+
+    thumb = tmp_path / "cover.jpg"
+    thumb.write_bytes(b"\xff\xd8\xff fake")
+    calls = []
+
+    def counting_verify(path):
+        calls.append(path)
+        return True
+
+    monkeypatch.setattr(main_module, "_verify_thumbnail_decodable", counting_verify)
+    monkeypatch.setattr(main_module, "_THUMBNAIL_VERIFICATION_CACHE", {})
+
+    assert main_module._verified_thumbnail_decodable(thumb) is True
+    assert main_module._verified_thumbnail_decodable(thumb) is True
+    assert len(calls) == 1
+
+    thumb.write_bytes(b"\xff\xd8\xff regenerated")
+    assert main_module._verified_thumbnail_decodable(thumb) is True
+    assert len(calls) == 2

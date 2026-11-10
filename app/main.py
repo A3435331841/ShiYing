@@ -912,11 +912,42 @@ def _publish_cover_cache_bytes(content: bytes, cache_path: Path) -> bool:
             temp_path.unlink(missing_ok=True)
 
 
+_THUMBNAIL_VERIFICATION_CACHE: dict[str, tuple[int, int, bool, float]] = {}
+_THUMBNAIL_VERIFICATION_TTL_SECONDS = 3600.0
+
+
+def _verified_thumbnail_decodable(path: Path) -> bool | None:
+    """按 (mtime, size) 缓存可解码判定：稳定的封面缓存命中不再每次冷加载
+    都拉起一个完整 ffmpeg 解码（N 个封面即 N 个进程、单个最长 10 秒超时）。
+    文件一旦重建（mtime/size 变化）立即重新验证，防截断语义不变。"""
+    try:
+        info = path.stat()
+    except OSError:
+        return None
+    key = str(path)
+    now = time.monotonic()
+    cached = _THUMBNAIL_VERIFICATION_CACHE.get(key)
+    if (
+        cached is not None
+        and now - cached[3] < _THUMBNAIL_VERIFICATION_TTL_SECONDS
+        and (cached[0], cached[1]) == (info.st_mtime_ns, info.st_size)
+    ):
+        return cached[2]
+    verdict = _verify_thumbnail_decodable(path)
+    _THUMBNAIL_VERIFICATION_CACHE[key] = (
+        info.st_mtime_ns,
+        info.st_size,
+        bool(verdict),
+        now,
+    )
+    return verdict
+
+
 @app.get("/api/jobs/{job_id}/cover")
 def get_job_cover(job_id: str):
     cache_path = _safe_thumbnail_path(job_id)
     if cache_path.is_file() and cache_path.stat().st_size > 0:
-        decodable = _verify_thumbnail_decodable(cache_path)
+        decodable = _verified_thumbnail_decodable(cache_path)
         if decodable is False:
             # A corrupt cache is a derived file, safe to drop and regenerate.
             cache_path.unlink(missing_ok=True)
@@ -1013,10 +1044,15 @@ def delete_job_record(job_id: str):
     thumb = _safe_thumbnail_path(job_id)
     try:
         manager.delete_job_record(job_id)
-        thumb.unlink(missing_ok=True)
-        return {"deleted": True}
     except Exception as exc:
         raise _http_error(exc) from exc
+    try:
+        thumb.unlink(missing_ok=True)
+    except OSError:
+        # 记录已删除成功；缩略图是可再生缓存，清理失败不应把删除报成
+        # 失败（否则重试同一 job_id 会得到矛盾的 404）。
+        pass
+    return {"deleted": True}
 
 
 @app.post("/api/jobs/{job_id}/retry")

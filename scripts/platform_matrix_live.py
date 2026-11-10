@@ -34,8 +34,10 @@ SAMPLES = [
     ("快手", "普通视频", "https://v.kuaishou.com/K4HGpAeI"),
     ("快手", "横版图集", "https://v.kuaishou.com/nnsTg7n9"),
     ("快手", "竖版长图（已知仅切片）", "https://v.kuaishou.com/EYhNCZ"),
-    ("小红书", "图文", "https://xhslink.com/AH3CnLCUzyN"),
-    ("小红书", "视频", "https://www.xiaohongshu.com/explore/8FugXY6yiE"),
+    # 2026-11-11 实测：下方图文短链已过期（预览返回网络错误类提示，行为正确），
+    # 视频样本 ID 非法（产品正确拒绝）；运行前请换成新复制的分享链接。
+    ("小红书", "图文（短链样本已过期）", "https://xhslink.com/AH3CnLCUzyN"),
+    ("小红书", "视频（样本ID无效）", "https://www.xiaohongshu.com/explore/8FugXY6yiE"),
     ("小红书", "实况图", "https://xhslink.cn/o/2JXQbZCrUf9"),
     ("视频号", "用户样本（需已保存元宝登录态）", "https://weixin.qq.com/sph/A2uumghDtJ"),
 ]
@@ -45,6 +47,9 @@ TERMINAL = {"completed", "partial", "failed", "cancelled"}
 
 
 def probe(path: Path) -> dict:
+    # 正文等非媒体产物没有流信息，ffprobe 必然失败；直接标注跳过。
+    if path.suffix.lower() in {".txt", ".json", ".md"}:
+        return {"ok": None, "skipped": "non-media file"}
     ffprobe = shutil.which("ffprobe") or str(ROOT / "tools" / "ffprobe.exe")
     try:
         out = subprocess.run(
@@ -119,7 +124,7 @@ def main_run() -> None:
             result.update({"platform": platform, "kind": kind, "url": url})
             summary.append(result)
             print(json.dumps({k: v for k, v in result.items() if k != "url"},
-                             ensure_ascii=False)[:600], flush=True)
+                             ensure_ascii=False), flush=True)
     (out_dir / "summary.json").write_text(
         json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
     print(f"SUMMARY {out_dir / 'summary.json'}", flush=True)

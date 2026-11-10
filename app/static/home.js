@@ -46,14 +46,20 @@
 
   const loadedCovers = new Set();
   const failedCovers = new Set();
-  window._onCoverLoad = (id, img) => {
-    if (img.isConnected === false) return;
+  // 封面回调只传 this，任务标识经 data-* 属性（dataset 已按 HTML 语义解码）
+  // 读取：内联事件属性会先做实体解码再编译为 JS，直接把值拼进 JS 字符串
+  // 是脆弱模式，一旦插值来源变化就会变成注入点。
+  window._onCoverLoad = (img) => {
+    const id = img?.dataset?.coverJob;
+    if (!id || img.isConnected === false) return;
     loadedCovers.add(id);
     failedCovers.delete(id);
     img.classList.add('loaded');
   };
-  window._onCoverError = (id, img, requestStatus) => {
-    if (img.isConnected === false) return;
+  window._onCoverError = (img) => {
+    const id = img?.dataset?.coverJob;
+    const requestStatus = img?.dataset?.coverStatus;
+    if (!id || img.isConnected === false) return;
     const job = state.jobs.get(`j:${id}`) || state.jobs.get(`w:${id}`);
     loadedCovers.delete(id);
     failedCovers.add(id);
@@ -267,7 +273,7 @@
     const firstIssue = formatTaskError(issue);
     const coverUrl = `/api/jobs/${encodeURIComponent(job.id)}/cover`;
     const hasCover = !job.wechat && !failedCovers.has(job.id), isLoaded = loadedCovers.has(job.id);
-    const imgTag = hasCover ? `<img class="task-thumb-img${isLoaded ? ' loaded' : ''}" src="${coverUrl}" alt="" loading="lazy" onload="window._onCoverLoad&&window._onCoverLoad('${escape(job.id)}',this)" onerror="window._onCoverError&&window._onCoverError('${escape(job.id)}',this,'${escape(job.status)}')">` : '';
+    const imgTag = hasCover ? `<img class="task-thumb-img${isLoaded ? ' loaded' : ''}" src="${coverUrl}" alt="" loading="lazy" data-cover-job="${escape(job.id)}" data-cover-status="${escape(job.status)}" onload="window._onCoverLoad&&window._onCoverLoad(this)" onerror="window._onCoverError&&window._onCoverError(this)">` : '';
     const missing = availability === 'missing' ? '文件已移动或删除' : availability === 'partial' ? '部分文件已移动或删除' : '';
     return `<article class="task-row platform-${escape(platform)}${library ? ' completed-row' : ''}${state.selectedCompleted.has(key) ? ' row-selected' : ''}" data-key="${escape(key)}">
       <div class="content-cell">
@@ -649,6 +655,9 @@
   }
   async function createAll(links) {
     state.busy = true; connection(state.ready); $('#submit-button span').textContent = '正在创建…';
+    // 批量提交可能耗时数分钟：只有输入框内容仍是提交时的原文时才回填，
+    // 避免覆盖用户在等待期间粘贴的下一批链接。
+    const submittedText = $('#share-input').value;
     try {
       const result = await submitLinks(links, async url => {
         let host;
@@ -656,11 +665,16 @@
         catch { const error = new Error('链接格式无效。'); error.httpStatus = 422; throw error; }
         const job = await api('/api/jobs', 'POST', {url}); put(job);
       });
-      $('#share-input').value = [...result.rejected.map(item => item.url), ...result.unconfirmed].join('\n');
+      const inputEdited = $('#share-input').value !== submittedText;
+      const remainder = [...result.rejected.map(item => item.url), ...result.unconfirmed].join('\n');
+      if (!inputEdited) {
+        $('#share-input').value = remainder;
+      }
       state.filter = 'all'; render();
       if (result.accepted.length) toast(`已添加 ${result.accepted.length} 个下载任务`);
       const notices = result.rejected.map(item => `${item.url}：${localize(item.message)}`);
       if (result.unconfirmed.length) notices.push('连接中断，剩余链接未全部确认。请先刷新任务列表，核对后再提交。');
+      if (inputEdited && remainder) notices.unshift('提交期间输入框有改动，以下链接未自动回填，请手动处理：\n' + remainder);
       setFormMessage(notices.join('\n'));
     } catch (error) { setFormMessage(localize(error.message)); }
     finally { state.busy = false; $('#submit-button span').textContent = '解析并下载'; connection(state.ready); }

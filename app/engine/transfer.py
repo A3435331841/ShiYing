@@ -1021,6 +1021,21 @@ class TransferMixin:
                     if verify_declared_dimensions and media_type == MediaType.IMAGE:
                         actual_dimensions = self._image_dimensions(first_chunk)
                         if not actual_dimensions:
+                            # 巨型 EXIF 或后置元数据盒会把真实尺寸推到首 1MB
+                            # 之外；在上限内继续读流累积扫描，而不是直接否决
+                            # 合法图片。多读的字节并入 first_chunk，写入路径不变。
+                            image_scan_limit = 8 * 1024 * 1024
+                            scanned = first_chunk
+                            while not actual_dimensions and len(scanned) < image_scan_limit:
+                                if should_cancel():
+                                    raise DownloadCancelledError("Task cancelled")
+                                more = response.read(1024 * 1024)
+                                if not more:
+                                    break
+                                scanned += more
+                                actual_dimensions = self._image_dimensions(scanned)
+                            first_chunk = scanned
+                        if not actual_dimensions:
                             raise MediaDownloadError(
                                 "Highest-available image dimensions could not be verified"
                             )

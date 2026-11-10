@@ -856,6 +856,14 @@ class DouyinMediaMixin:
                             "proxy-authorization",
                         }
                     }
+                # 303 语义为"用 GET 取回"；301/302 对带体的 POST 也按浏览器
+                # 惯例降级为 GET。当前所有调用方本就是 GET（无请求体），
+                # 此守卫确保未来若出现带体请求不会把载荷重放到跳转目标。
+                if (
+                    request.method not in {"GET", "HEAD"}
+                    and raw_response.status_code in {301, 302, 303}
+                ):
+                    request = request.replace(url=target_url, method="GET", data=None)
                 current_url = target_url
                 continue
 

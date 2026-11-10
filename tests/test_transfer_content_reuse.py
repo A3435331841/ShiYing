@@ -398,3 +398,57 @@ def test_duplicate_content_length_header_still_enforced_against_truncation(tmp_p
         _download_xhs(engine, ydl, tmp_path, MediaType.IMAGE)
 
     assert not list(tmp_path.glob("*.jpg"))
+
+
+def test_image_dimensions_beyond_first_chunk_are_still_verified(tmp_path):
+    """SOF 被巨型前置段推到首 1MB 之外的合法 JPEG 不应被误判失败。
+
+    旧实现只对首 1MB 解析尺寸，超过即报 "could not be verified"；
+    新实现在上限内继续读流累积扫描。
+    """
+
+    def _padding_segment() -> bytes:
+        return b"\xff\xe1" + (65533).to_bytes(2, "big") + b"\x00" * 65533
+
+    sof = (
+        b"\xff\xc0"
+        + (17).to_bytes(2, "big")
+        + b"\x08"
+        + (240).to_bytes(2, "big")
+        + (20).to_bytes(2, "big")
+        + b"\x03\x01\x11\x00\x02\x11\x01\x03\x11\x01"
+    )
+    payload = b"\xff\xd8" + _padding_segment() * 16 + sof + b"\xff\xd9"
+    assert len(payload) > 1024 * 1024  # SOF 确实落在首块之外
+
+    engine = MediaDownloader(DownloaderConfig(cookie_browser=None))
+    response = _Response(payload, "image/jpeg", None)
+    ydl = _AssetYoutubeDL(response)
+
+    path, _ = _download_xhs(
+        engine,
+        ydl,
+        tmp_path,
+        MediaType.IMAGE,
+        verify_declared_dimensions=True,
+    )
+
+    assert path.read_bytes() == payload
+
+
+def test_image_dimensions_missing_after_deep_scan_still_fails(tmp_path):
+    """深度扫描仍找不到尺寸时保持 fail-closed。"""
+
+    payload = b"\xff\xd8" + b"\x00" * (1024 * 1024 + 64)  # 无任何段标记
+    engine = MediaDownloader(DownloaderConfig(cookie_browser=None))
+    response = _Response(payload, "image/jpeg", None)
+    ydl = _AssetYoutubeDL(response)
+
+    with pytest.raises(MediaDownloadError, match="could not be verified"):
+        _download_xhs(
+            engine,
+            ydl,
+            tmp_path,
+            MediaType.IMAGE,
+            verify_declared_dimensions=True,
+        )

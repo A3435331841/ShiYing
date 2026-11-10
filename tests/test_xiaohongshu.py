@@ -1338,3 +1338,21 @@ def test_video_assets_tolerates_non_dict_consumer():
     note = {"video": {"consumer": "https://garbage.example/value"}}
 
     assert _video_assets(note) == []
+
+
+def test_parse_note_limit_words_in_note_text_do_not_reject(monkeypatch) -> None:
+    """正文/描述含限流词的正常笔记必须能下载：限流判定只用于解析失败页。"""
+
+    class LimitWordNoteYoutubeDL(FakeYoutubeDL):
+        html = (
+            "<html><body><h1>测试一下 too many requests 的边界</h1>"
+            "<p>有人问访问频繁怎么办，本文讨论词频而非状态。</p>"
+            "</body></html>"
+            + make_html()
+        )
+
+    monkeypatch.setattr("app.xiaohongshu.YoutubeDL", LimitWordNoteYoutubeDL)
+
+    note, _ = parse_note(NOTE_URL)
+
+    assert note.note_id == NOTE_ID

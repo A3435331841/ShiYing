@@ -1340,11 +1340,9 @@ def parse_note(
         html = load(False)
         cookie_fallback_used = True
 
-    if _looks_like_transient_limit(html):
-        raise TemporaryAccessError(
-            "Xiaohongshu temporarily rate-limited the note request. Retry after a "
-            "short wait; Chrome verification is not required."
-        )
+    # 限流词检查放在解析失败之后：笔记正文/评论里出现"访问频繁"等词句的
+    # 正常笔记此前会被永久误拒。真正的限流页解析不出笔记，
+    # 会在下方 not-note 分支得到同样的 TemporaryAccessError。
     state_error: Exception | None = None
     note: Any = None
     try:
@@ -1355,6 +1353,11 @@ def parse_note(
     except (ValueError, TypeError, json.JSONDecodeError) as exc:
         state_error = exc
     if not isinstance(note, dict) or not note:
+        if _looks_like_transient_limit(html):
+            raise TemporaryAccessError(
+                "Xiaohongshu temporarily rate-limited the note request. Retry after a "
+                "short wait; Chrome verification is not required."
+            )
         if _looks_like_auth_page(html):
             raise _xiaohongshu_auth_required(
                 url,

@@ -118,6 +118,8 @@ class TaskList extends Element {
       img.src = attr('src');
       img.onload = attr('onload');
       img.onerror = attr('onerror');
+      img.dataset.coverJob = attr('data-cover-job');
+      img.dataset.coverStatus = attr('data-cover-status');
       img.complete = false;
       img.naturalWidth = 0;
       wrap.append(img);
@@ -220,7 +222,7 @@ function start(h) {
   assert.equal(img.isConnected, true);
   assert.equal(h.list.requests.length, 1);
   assert.equal(img.src, `/api/jobs/${ID}/cover`);
-  assert.match(img.onerror, /'downloading'/, 'the handler must capture request-time status');
+  assert.equal(img.dataset.coverStatus, 'downloading', 'the handler must capture request-time status');
   return img;
 }
 function update(h, status, revision, title) {
@@ -255,7 +257,7 @@ const scenarios = {
     assert.equal(h.list.requests.length, 2);
     assert.ok(h.cover());
     assert.equal(h.cover().isConnected, true);
-    assert.match(h.cover().onerror, /'paused'/);
+    assert.equal(h.cover().dataset.coverStatus, 'paused');
   },
 
   completion_retry_and_completed_error_suppression() {
@@ -270,7 +272,7 @@ const scenarios = {
     assert.notEqual(completed, active);
     assert.equal(completed.isConnected, true);
     assert.equal(h.list.requests.length, 2);
-    assert.match(completed.onerror, /'completed'/);
+    assert.equal(completed.dataset.coverStatus, 'completed');
 
     h.error(completed);
     assert.equal(completed.isConnected, false);
@@ -308,7 +310,7 @@ const scenarios = {
     assert.equal(completed.isConnected, true);
     assert.equal(h.api.failedCovers.has(ID), false);
     assert.equal(h.list.requests.length, 2);
-    assert.match(completed.onerror, /'completed'/);
+    assert.equal(completed.dataset.coverStatus, 'completed');
     h.error(completed);
     assert.equal(h.api.failedCovers.has(ID), true);
     assert.equal(h.list.requests.length, 2, 'a completed-request 404 cannot retry itself');

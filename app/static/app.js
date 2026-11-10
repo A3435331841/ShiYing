@@ -97,6 +97,7 @@
     cookie_unavailable: "Chrome Cookie 读取失败",
     security_blocked: "异常媒体响应已安全拦截",
     local_configuration: "本机运行环境需要处理",
+    signing_queue_timeout: "等待抖音签名通道超时",
     unknown: "任务执行遇到异常"
   };
 
@@ -115,6 +116,7 @@
     cookie_unavailable: "Cookie 异常",
     security_blocked: "已拦截",
     local_configuration: "环境异常",
+    signing_queue_timeout: "排队等待",
     unknown: "失败"
   };
 
@@ -135,6 +137,7 @@
     cookie_unavailable: "程序无法读取任务绑定的 Chrome Cookie，因此不能可靠确认当前登录权限或最高画质。",
     security_blocked: "媒体地址出现了未通过安全校验的跳转或响应变化。程序在读取或保存未知响应前已经拦截。",
     local_configuration: "本机缺少或无法启动下载和画质校验需要的组件。",
+    signing_queue_timeout: "同一时间只能有一个任务使用抖音签名通道。本任务排队等待另一任务释放通道，15 分钟后仍未轮到，没有开始下载。",
     unknown: "程序遇到了尚未归类的异常，暂时无法仅凭现有响应确定网站做了什么。"
   };
 
@@ -153,6 +156,7 @@
     cookie_unavailable: "完全退出 Chrome 后重试，并允许系统读取 Cookie；确认选中了已登录的 Chrome Profile。若只下载公开内容，也可以关闭 Cookie，但必须从原链接创建新任务。",
     security_blocked: "不要手动放行未知地址。先关闭可能改写 HTTPS 的代理或 VPN，再从原链接重试；若仍复现，只反馈界面显示的安全原因或短指纹，不要发送带签名的完整媒体链接。",
     local_configuration: "按下方技术详情安装或修复缺失组件，然后完全停止并重新启动程序。macOS 缺少 FFprobe/FFmpeg 时运行“brew install ffmpeg”；Windows 或 Linux 请按 README 安装 FFmpeg；浏览器组件缺失时重新运行启动脚本安装依赖。",
+    signing_queue_timeout: "等当前正在运行的抖音任务完成或取消后，点击重试即可。若经常同时提交多个抖音任务，请分批提交，或错开主页大任务与单作品任务。",
     unknown: "先从原链接重试一次；如果相同错误再次出现，请保留已完成文件，并把完整的脱敏技术详情、页面版本号和 build ID 发给开发者。"
   };
 

@@ -287,6 +287,8 @@ def _adopt_windows_lock_event(path: Path, inherited_handle: int) -> int:
         _windows_event_name(path),
     )
     if not handle:
+        # 命名事件已随 launcher 消失：抛出前先关掉继承句柄，不留给进程退出。
+        kernel32.CloseHandle(wintypes.HANDLE(inherited_handle))
         raise RuntimeErrorBase(
             "The inherited Windows project lock object no longer exists"
         )

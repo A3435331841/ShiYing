@@ -3464,3 +3464,23 @@ def test_raise_signing_error_site_failure_stays_site_response_changed() -> None:
         _raise_signing_error(VIDEO_URL, Exception("aweme payload looked wrong"))
 
     assert captured.value.issue_code == SiteIssueCode.SITE_RESPONSE_CHANGED
+
+
+def test_raise_signing_error_distinguishes_queue_timeout_from_no_progress() -> None:
+    """队列等待超时（category=None）归入独立分类；真实无进展仍归响应变化。"""
+
+    queued = douyin_signing._SigningNoProgressTimeout(
+        "Timed out waiting for the Douyin signed request slot.",
+        category=None,
+    )
+    with pytest.raises(TemporaryAccessError) as captured:
+        _raise_signing_error(VIDEO_URL, queued)
+    assert captured.value.issue_code == SiteIssueCode.SIGNING_QUEUE_TIMEOUT
+    assert "signed-queue-timeout" in str(captured.value)
+
+    stalled = douyin_signing._SigningNoProgressTimeout(
+        "no verified progress", category="no-progress-timeout",
+    )
+    with pytest.raises(TemporaryAccessError) as stalled_captured:
+        _raise_signing_error(VIDEO_URL, stalled)
+    assert stalled_captured.value.issue_code == SiteIssueCode.SITE_RESPONSE_CHANGED

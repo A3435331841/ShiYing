@@ -21,6 +21,7 @@ class SiteIssueCode(str, Enum):
     COOKIE_UNAVAILABLE = "cookie_unavailable"
     SECURITY_BLOCKED = "security_blocked"
     LOCAL_CONFIGURATION = "local_configuration"
+    SIGNING_QUEUE_TIMEOUT = "signing_queue_timeout"
     UNKNOWN = "unknown"
 
 
@@ -111,6 +112,9 @@ def classify_site_issue(
         return SiteIssueCode.NETWORK_ERROR
     if reason.startswith("api-") or reason == "no-progress-timeout":
         return SiteIssueCode.SITE_RESPONSE_CHANGED
+    if reason == "signed-queue-timeout":
+        # 本地排队等待另一任务的签名槽超时，不是站点响应变化。
+        return SiteIssueCode.SIGNING_QUEUE_TIMEOUT
 
     if is_explicit_rate_limit_message(lowered) or any(
         marker in lowered

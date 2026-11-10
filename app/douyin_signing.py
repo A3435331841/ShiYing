@@ -2247,6 +2247,16 @@ def _raise_signing_error(
             issue_code=SiteIssueCode.NETWORK_ERROR,
         ) from cause
     if isinstance(cause, _SigningNoProgressTimeout):
+        if cause.category is None:
+            # 唯一以 category=None 抛出的场景：队列等待签名槽超时。
+            # 这是本地排队而非站点变化，重试建议也不同。
+            raise TemporaryAccessError(
+                "Douyin signed discovery waited 15 minutes for another task to "
+                "release the signing slot. Wait for the other Douyin task to "
+                "finish or cancel it, then retry; Chrome verification is not "
+                "required. Reason category: signed-queue-timeout.",
+                issue_code=SiteIssueCode.SIGNING_QUEUE_TIMEOUT,
+            ) from cause
         code = _transient_site_issue_code(cause.category)
         raise TemporaryAccessError(
             "Douyin signed discovery stopped after 120 seconds without verified "

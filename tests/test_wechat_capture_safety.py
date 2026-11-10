@@ -511,3 +511,66 @@ def test_status_reports_chrome_fallback_without_reading_cookies(monkeypatch, tmp
     result = wechat.status()
     assert result["cookie_configured"] is False
     assert result["chrome_fallback"] is True
+
+
+def test_login_route_maps_playwright_failure_to_user_error(monkeypatch):
+    """用户中途关闭登录窗口（Playwright 异常）应得到 400 用户提示而非 500。"""
+
+    class _FakePage:
+        def goto(self, url, timeout=None):
+            return None
+
+        def wait_for_timeout(self, ms):
+            return None
+
+    class _FakeContext:
+        def new_page(self):
+            return _FakePage()
+
+        def cookies(self, *args, **kwargs):
+            from playwright.sync_api import Error as PlaywrightError
+            raise PlaywrightError(
+                "Target page, context or browser has been closed"
+            )
+
+    class _FakeBrowser:
+        def new_context(self):
+            return _FakeContext()
+
+        def close(self):
+            return None
+
+    class _FakeChromium:
+        def launch(self, **kwargs):
+            return _FakeBrowser()
+
+    class _FakePlaywright:
+        def __init__(self):
+            self.chromium = _FakeChromium()
+
+    class _FakeSyncPlaywright:
+        def __enter__(self):
+            return _FakePlaywright()
+
+        def __exit__(self, *args):
+            return False
+
+    monkeypatch.setattr("playwright.sync_api.sync_playwright", _FakeSyncPlaywright)
+    from fastapi.testclient import TestClient
+    from app import main
+    client = TestClient(main.app, base_url='http://localhost')
+    r = client.post('/api/wechat/login', headers={'origin': 'http://localhost'})
+    assert r.status_code == 400
+    assert '窗口' in r.json()['detail']
+
+
+def test_legacy_discovering_record_is_migrated_and_never_zombie():
+    """旧版 discovering 记录启动即迁移为 interrupted：cancel 不再制造
+    永远 cancelling 的僵尸、delete 也不再永久 409。"""
+    jobs = [{'id': 'legacy-disc', 'status': 'discovering',
+             'url': 'https://weixin.qq.com/sph/A2uumghDtJ'}]
+
+    wechat._migrate_stale_wechat_records(jobs)
+
+    assert jobs[0]['status'] == 'interrupted'
+    assert jobs[0]['message'] == '上次运行已中断，请重新提交链接。'

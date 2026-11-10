@@ -192,3 +192,10 @@ def test_auth_context_does_not_turn_negated_captcha_text_into_verification() -> 
         classify_site_issue(message, authentication_required=True)
         == SiteIssueCode.LOGIN_REQUIRED
     )
+
+
+def test_signing_queue_timeout_reason_maps_to_dedicated_code() -> None:
+    assert classify_site_issue(
+        "Douyin signed discovery waited 15 minutes for another task to release "
+        "the signing slot. Reason category: signed-queue-timeout."
+    ) is SiteIssueCode.SIGNING_QUEUE_TIMEOUT

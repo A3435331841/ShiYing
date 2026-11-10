@@ -27,6 +27,7 @@ ISSUE_SOLUTION_MARKERS = {
     "cookie_unavailable": "完全退出 Chrome",
     "security_blocked": "不要手动放行未知地址",
     "local_configuration": "brew install ffmpeg",
+    "signing_queue_timeout": "分批提交",
     "unknown": "版本号和 build ID",
 }
 

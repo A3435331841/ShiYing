@@ -157,6 +157,10 @@ def run_guarded_command(
     handled = [signal.SIGINT, signal.SIGTERM]
     if hasattr(signal, "SIGHUP"):
         handled.append(signal.SIGHUP)
+    if hasattr(signal, "SIGQUIT"):
+        # Ctrl+\ 默认动作会核心转储杀死 guard 本体，受护进程树成为孤儿
+        # 继续运行；纳入统一停止语义。
+        handled.append(signal.SIGQUIT)
     previous: dict[signal.Signals, object] = {}
     process: subprocess.Popen[bytes] | None = None
 

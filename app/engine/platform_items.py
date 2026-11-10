@@ -89,12 +89,14 @@ class PlatformItemsMixin:
         should_cancel: CancelCallback,
     ) -> DownloadOutcome:
         from ..wechat import WeChatUserError, download_stream_and_decrypt, load_yuanbao_cookie, media_selection, profile_yuanbao, verify_video, work_identity
-        
-        with threading.RLock():
-            try:
-                cookie = load_yuanbao_cookie()
-            except WeChatUserError as exc:
-                raise MediaDownloadError(safe_external_error_message(exc)) from exc
+
+        # 元宝登录态读取不持全局锁（wechat.load_yuanbao_cookie 的既定语义）：
+        # 此前的 `with threading.RLock():` 每次新建一次性锁实例，
+        # 不构成任何互斥，只会误导维护者。
+        try:
+            cookie = load_yuanbao_cookie()
+        except WeChatUserError as exc:
+            raise MediaDownloadError(safe_external_error_message(exc)) from exc
         if not cookie:
             raise MediaDownloadError("视频号下载需要配置腾讯元宝登录态")
         feed, _ = profile_yuanbao(item.source_url, cookie)

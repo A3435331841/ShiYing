@@ -320,6 +320,9 @@ def _shutdown_signal_handlers(stop_requested: threading.Event) -> Iterator[None]
         yield
         return
     handled = [signal.SIGINT, signal.SIGTERM]
+    if hasattr(signal, "SIGQUIT"):
+        # 与 process_guard 一致：Ctrl+\ 不再核心转储，而是触发受控停止。
+        handled.append(signal.SIGQUIT)
     if hasattr(signal, "SIGHUP"):
         handled.append(signal.SIGHUP)
     if hasattr(signal, "SIGBREAK"):

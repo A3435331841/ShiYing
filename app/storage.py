@@ -10,6 +10,24 @@ from pathlib import Path
 from .models import DownloadJob
 
 
+def _fsync_directory(path: Path) -> None:
+    """POSIX 上让目录项改动落盘；与 runtime.write_runtime_record 同一标准。
+
+    文件内容由 tmp+fsync+replace 保证不损坏；缺少目录 fsync 时，
+    崩溃可让最近数秒的 replace/unlink 回滚（任务状态丢失或复活）。
+    """
+    if os.name == "nt":
+        return
+    try:
+        fd = os.open(path, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(fd)
+    except OSError:
+        pass
+
+
 class JobNotFoundError(KeyError):
     pass
 
@@ -40,6 +58,7 @@ class JsonJobStore:
                     handle.flush()
                     os.fsync(handle.fileno())
                 os.replace(temporary, target)
+                _fsync_directory(self.state_dir)
             finally:
                 temporary.unlink(missing_ok=True)
 
@@ -54,6 +73,7 @@ class JsonJobStore:
         path = self._job_path(job_id)
         with self._lock:
             path.unlink(missing_ok=True)
+            _fsync_directory(self.state_dir)
 
     def load_all(self) -> tuple[list[DownloadJob], list[str]]:
         jobs: list[DownloadJob] = []

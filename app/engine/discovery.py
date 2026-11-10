@@ -106,11 +106,11 @@ class DiscoveryMixin:
         if platform == Platform.WECHAT:
             from ..wechat import WeChatUserError, profile_yuanbao, media_selection, load_yuanbao_cookie, work_identity
             
-            with threading.RLock():
-                try:
-                    cookie = load_yuanbao_cookie()
-                except WeChatUserError as exc:
-                    raise DiscoveryError(str(exc)) from exc
+            # 同 platform_items：登录态读取不持锁，一次性 RLock 实例是假互斥。
+            try:
+                cookie = load_yuanbao_cookie()
+            except WeChatUserError as exc:
+                raise DiscoveryError(str(exc)) from exc
             if not cookie:
                 raise DiscoveryError("视频号解析需要配置腾讯元宝登录态，请在设置中配置后重试。")
             feed, author_info = profile_yuanbao(url, cookie)

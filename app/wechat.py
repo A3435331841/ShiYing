@@ -79,9 +79,14 @@ def _chrome_yuanbao_cookie() -> str:
             continue
         if cookie.expires and float(cookie.expires) <= now:
             continue
-        if not cookie.name or '\n' in cookie.value or '\r' in cookie.value:
+        # http.cookiejar 允许 value=None 的 flag cookie；无值 Cookie 不携带
+        # 登录态，跳过而不是让 `'\n' in None` 抛未分类 TypeError。
+        if not cookie.name or not cookie.value:
             continue
-        pairs.append(f'{cookie.name}={cookie.value}')
+        value = cookie.value
+        if '\n' in value or '\r' in value:
+            continue
+        pairs.append(f'{cookie.name}={value}')
     return '; '.join(pairs)
 
 
@@ -108,9 +113,15 @@ try:
     JOBS = json.loads(STATE.read_text('utf-8'))
 except (OSError, ValueError):
     JOBS = []
-for job in JOBS:
-    if job.get('status') in ('queued', 'downloading', 'cancelling', 'capturing'):
-        job.update(status='interrupted', message='上次运行已中断，请重新提交链接。')
+def _migrate_stale_wechat_records(jobs: list[dict]) -> None:
+    """上次运行中断的旧记录统一置为 interrupted（含 discovering，
+    否则它会成为 cancel 可置 cancelling、delete 却 409 的永久僵尸）。"""
+    for job in jobs:
+        if job.get('status') in ('queued', 'discovering', 'downloading', 'cancelling', 'capturing'):
+            job.update(status='interrupted', message='上次运行已中断，请重新提交链接。')
+
+
+_migrate_stale_wechat_records(JOBS)
 
 
 class Input(BaseModel):
@@ -423,7 +434,7 @@ def delete_job_record(job_id: str, request: Request):
         job = next((j for j in JOBS if j['id'] == job_id), None)
         if job is None:
             raise HTTPException(404, '没有找到该任务。')
-        if job_id in CANCELLATIONS or job.get('status') in ('queued', 'capturing', 'downloading', 'cancelling'):
+        if job_id in CANCELLATIONS or job.get('status') in ('queued', 'discovering', 'capturing', 'downloading', 'cancelling'):
             raise HTTPException(409, '任务仍在运行，请等待停止后再移除记录。')
         remaining = [j for j in JOBS if j['id'] != job_id]
         _save_jobs(remaining)
@@ -484,6 +495,17 @@ def login_with_browser(timeout: int = 300):
                 SECRET.parent.mkdir(parents=True, exist_ok=True)
                 save_secret(SECRET, header)
             return {'saved': True}
+        except WeChatUserError:
+            raise
+        except (RuntimeError, OSError):
+            # save_secret 的 DPAPI/非 Windows 失败：登录态拿到了但存不下来。
+            raise WeChatUserError(
+                '登录态获取成功但保存失败：本机无法加密保存 Cookie，请在 Windows 上重试。'
+            ) from None
+        except Exception:
+            # 用户中途关闭登录窗口、浏览器启动失败等属常态操作，
+            # 不应作为 HTTP 500 穿透到界面。
+            raise WeChatUserError('扫码登录窗口已关闭或浏览器启动失败，请重试。') from None
         finally:
             browser.close()
 

@@ -2334,6 +2334,26 @@ def _raise_signing_error(
             "required. Reason category: network-timeout.",
             issue_code=SiteIssueCode.NETWORK_ERROR,
         ) from cause
+    if any(
+        marker in message
+        for marker in (
+            "target page, context or browser has been closed",
+            "browser has been closed",
+            "target crashed",
+            "browser crashed",
+            "browser closed unexpectedly",
+        )
+    ):
+        # 本机浏览器进程在签名过程中退出/崩溃：这是本地运行环境问题，
+        # 不是抖音响应变化，不应让用户误以为网站改版。
+        diagnostic_code = _signing_diagnostic_code(cause)
+        raise DiscoveryError(
+            "The local browser used for Douyin signing exited before a verified "
+            "response was available. Fully stop Shiying, reopen the browser once, "
+            "then retry the task. "
+            f"Diagnostic code: {diagnostic_code}.",
+            issue_code=SiteIssueCode.LOCAL_CONFIGURATION,
+        ) from cause
     diagnostic_code = _signing_diagnostic_code(cause)
     raise DiscoveryError(
         "Douyin signed discovery failed before a verified response was available. "

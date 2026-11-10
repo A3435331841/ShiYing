@@ -3400,3 +3400,28 @@ def test_profile_page_limit_does_not_request_auth_and_closes_resources(
 
     assert page.closed and context.closed and browser.closed
     assert manager.resources_closed_on_exit is True
+
+
+def test_raise_signing_error_classifies_local_browser_crash() -> None:
+    """本机浏览器进程崩溃应归为 LOCAL_CONFIGURATION，而不是"网站响应变化"。"""
+
+    with pytest.raises(DiscoveryError) as captured:
+        _raise_signing_error(
+            VIDEO_URL,
+            Exception(
+                "Page.evaluate: Target page, context or browser has been closed"
+            ),
+        )
+
+    assert captured.value.issue_code == SiteIssueCode.LOCAL_CONFIGURATION
+    assert "local browser" in str(captured.value)
+    assert "Diagnostic code: signing-runtime-error" in str(captured.value)
+
+
+def test_raise_signing_error_site_failure_stays_site_response_changed() -> None:
+    """非浏览器崩溃的未知失败仍应归为 SITE_RESPONSE_CHANGED。"""
+
+    with pytest.raises(DiscoveryError) as captured:
+        _raise_signing_error(VIDEO_URL, Exception("aweme payload looked wrong"))
+
+    assert captured.value.issue_code == SiteIssueCode.SITE_RESPONSE_CHANGED

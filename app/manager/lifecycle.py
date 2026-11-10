@@ -220,6 +220,9 @@ class LifecycleMixin:
             job.active_item_id = None
             self._clear_activity_locked(job)
             job.cancel_requested = False
+            # 暂停请求若在最后一个条目收尾后才到达，worker 不再检查它；
+            # 任务已完成时该标志必须清除，否则界面与磁盘残留"暂停请求中"。
+            job.pause_requested = False
             job.refresh_counts()
             if (
                 job.total_items

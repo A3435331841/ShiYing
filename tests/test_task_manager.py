@@ -8518,3 +8518,134 @@ def test_download_job_activity_fields_are_optional_for_legacy_state(tmp_path) ->
 
     assert legacy.activity_message is None
     assert legacy.activity_started_at is None
+
+
+def test_cancel_wins_when_pause_and_cancel_interleave(tmp_path) -> None:
+    """暂停后紧跟取消：用户最后按的是"停止"，终态必须是 CANCELLED 而非 PAUSED。"""
+    import threading as _threading
+
+    release = _threading.Event()
+    started = _threading.Event()
+
+    class InterleaveEngine:
+        def discover(self, url, platform, kind, *, should_cancel):
+            return DiscoveryResult(
+                author="Interleave Author",
+                items=[
+                    DownloadItem(
+                        id="active",
+                        media_id="abcdefghijk",
+                        source_url="https://www.youtube.com/watch?v=abcdefghijk",
+                        title="Interleave title",
+                        media_type=MediaType.VIDEO,
+                    )
+                ],
+            )
+
+        def download_item(self, item, platform, output_dir, *, callback, should_cancel):
+            started.set()
+            while not release.wait(timeout=0.1):
+                if should_cancel():
+                    raise DownloadCancelledError("Task cancelled")
+            raise DownloadCancelledError("Task cancelled")
+
+    manager = DownloadManager(
+        state_dir=tmp_path / "state",
+        default_output_root=tmp_path / "downloads",
+        max_workers=1,
+    )
+    manager._engine_for_job = lambda job: InterleaveEngine()
+    try:
+        created = manager.create_job(
+            "https://www.youtube.com/watch?v=abcdefghijk", cookie_browser=None
+        )
+        assert started.wait(timeout=5)
+        manager.pause_job(created.id)
+        manager.cancel_job(created.id)
+        release.set()
+        final = wait_for_job(manager, created.id)
+
+        assert final.status == JobStatus.CANCELLED
+        assert final.cancel_requested is False
+    finally:
+        manager.shutdown()
+
+
+def test_cancel_on_interrupted_job_does_not_block_deletion(tmp_path) -> None:
+    """对 INTERRUPTED 任务的取消发生在 worker 退出尾窗：标志必须被清除，
+    否则 cancel_requested 跨重启残留、记录永久无法删除。"""
+    manager = DownloadManager(
+        state_dir=tmp_path / "state",
+        default_output_root=tmp_path / "downloads",
+        max_workers=1,
+    )
+    try:
+        created = manager.create_job(
+            "https://www.youtube.com/watch?v=abcdefghijk",
+            auto_start=False,
+            cookie_browser=None,
+        )
+        with manager._lock:
+            job = manager._require_job(created.id)
+            job.status = JobStatus.INTERRUPTED
+            job.error = "interrupted for test"
+            manager._commit_locked(job)
+
+        cancelled = manager.cancel_job(created.id)
+
+        assert cancelled.status == JobStatus.INTERRUPTED
+        assert cancelled.cancel_requested is False
+        # 记录保持可删除（旧缺陷会让这里抛 JobBusyError）。
+        manager.delete_job_record(created.id)
+    finally:
+        manager.shutdown()
+
+
+def test_finish_job_clears_pause_requested(tmp_path) -> None:
+    """暂停请求在收尾后才到达时，完成任务不得残留"暂停请求中"标志。"""
+    manager = DownloadManager(
+        state_dir=tmp_path / "state",
+        default_output_root=tmp_path / "downloads",
+        max_workers=1,
+    )
+    try:
+        created = manager.create_job(
+            "https://www.youtube.com/watch?v=abcdefghijk",
+            auto_start=False,
+            cookie_browser=None,
+        )
+        with manager._lock:
+            job = manager._require_job(created.id)
+            job.pause_requested = True
+            job.status = JobStatus.DOWNLOADING
+
+        manager._finish_job(created.id)
+
+        finished = manager.get_job(created.id)
+        assert finished.pause_requested is False
+    finally:
+        manager.shutdown()
+
+
+def test_resubmission_clears_stale_warning(tmp_path) -> None:
+    """重新提交时旧 warning 必须清空，否则上一轮的告警污染下一轮终态。"""
+    manager = DownloadManager(
+        state_dir=tmp_path / "state",
+        default_output_root=tmp_path / "downloads",
+        max_workers=1,
+    )
+    try:
+        created = manager.create_job(
+            "https://www.youtube.com/watch?v=abcdefghijk",
+            auto_start=False,
+            cookie_browser=None,
+        )
+        with manager._lock:
+            job = manager._require_job(created.id)
+            job.warning = "上一次运行留下的旧告警"
+
+        manager.start_job(created.id)
+
+        assert manager.get_job(created.id).warning is None
+    finally:
+        manager.shutdown()

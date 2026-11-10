@@ -696,28 +696,37 @@ class DownloadManager(
                 JobStatus.CANCELLED,
             }:
                 return job.model_copy(deep=True)
-            job.cancel_requested = True
-            self._clear_activity_locked(job)
-            job.updated_at = utc_now()
-            event = self._cancel_events.setdefault(job_id, threading.Event())
-            event.set()
-            future = self._futures.get(job_id)
-            future_cancelled = bool(future and future.cancel())
-            finalized = (
-                job.status == JobStatus.NEEDS_AUTH
-                or future is None
-                or future.done()
-                or future_cancelled
-            )
-            if finalized:
-                self._mark_cancelled_locked(job)
+            if job.status in {JobStatus.INTERRUPTED, JobStatus.PAUSED}:
+                # worker 已在退出尾窗（标记状态后只剩通知与返回），不会再
+                # 消费取消请求。此处若照常置 cancel_requested=True，该标志
+                # 会跨重启永久残留，使记录无法删除；直接清标志保持原状态。
+                job.cancel_requested = False
+                self._clear_activity_locked(job)
+                job.updated_at = utc_now()
                 self._commit_locked(job)
             else:
+                job.cancel_requested = True
+                self._clear_activity_locked(job)
+                job.updated_at = utc_now()
+                event = self._cancel_events.setdefault(job_id, threading.Event())
+                event.set()
+                future = self._futures.get(job_id)
+                future_cancelled = bool(future and future.cancel())
+                finalized = (
+                    job.status == JobStatus.NEEDS_AUTH
+                    or future is None
+                    or future.done()
+                    or future_cancelled
+                )
+                if finalized:
+                    self._mark_cancelled_locked(job)
                 self._commit_locked(job)
-        self._notify(
-            self.get_job(job_id), "cancelled" if finalized else "cancel_requested"
-        )
-        return self.get_job(job_id)
+                if finalized:
+                    self._notify(self.get_job(job_id), "cancelled")
+                    return self.get_job(job_id)
+            self._notify(self.get_job(job_id), "cancel_requested")
+            return self.get_job(job_id)
+
     def pause_job(self, job_id: str) -> DownloadJob:
         with self._lock:
             job = self._require_job(job_id)
@@ -923,12 +932,14 @@ class DownloadManager(
         cancel_event = threading.Event()
         self._cancel_events[job.id] = cancel_event
         job.cancel_requested = False
+        job.pause_requested = False
         job.status = JobStatus.QUEUED
         self._clear_activity_locked(job)
         job.error = None
         job.auth_message = None
         job.issue_code = None
         job.issue_message = None
+        job.warning = None
         if job.platform == Platform.KUAISHOU:
             job.diagnostic_code = None
         job.verification_url = None
@@ -1268,7 +1279,9 @@ class DownloadManager(
                         job = self._require_job(job_id)
                         item = self._find_item(job, item_id)
                         cancelled = cancel_event.is_set() or job.cancel_requested
-                        paused = job.pause_requested
+                        # cancel 与 pause 同时到达时以 cancel 为准：
+                        # 用户最后按的是"停止"，任务不得降级为可恢复的 PAUSED。
+                        paused = job.pause_requested and not job.cancel_requested
                         if cancelled:
                             if paused:
                                 self._mark_paused_locked(job)
@@ -1314,7 +1327,9 @@ class DownloadManager(
                         job = self._require_job(job_id)
                         item = self._find_item(job, item_id)
                         cancelled = cancel_event.is_set() or job.cancel_requested
-                        paused = job.pause_requested
+                        # cancel 与 pause 同时到达时以 cancel 为准：
+                        # 用户最后按的是"停止"，任务不得降级为可恢复的 PAUSED。
+                        paused = job.pause_requested and not job.cancel_requested
                         if cancelled:
                             if paused:
                                 self._mark_paused_locked(job)
@@ -1425,7 +1440,8 @@ class DownloadManager(
             with self._lock:
                 job = self._require_job(job_id)
                 cancelled = cancel_event.is_set() or job.cancel_requested
-                paused = job.pause_requested
+                # cancel 与 pause 同时到达时以 cancel 为准（见上方注释）。
+                paused = job.pause_requested and not job.cancel_requested
                 if cancelled:
                     if paused:
                         self._mark_paused_locked(job)
@@ -1456,7 +1472,8 @@ class DownloadManager(
             with self._lock:
                 job = self._require_job(job_id)
                 cancelled = cancel_event.is_set() or job.cancel_requested
-                paused = job.pause_requested
+                # cancel 与 pause 同时到达时以 cancel 为准（见上方注释）。
+                paused = job.pause_requested and not job.cancel_requested
                 if cancelled:
                     if paused:
                         self._mark_paused_locked(job)
@@ -1486,7 +1503,7 @@ class DownloadManager(
         except DownloadCancelledError:
             with self._lock:
                 job = self._require_job(job_id)
-                paused = job.pause_requested
+                paused = job.pause_requested and not job.cancel_requested
                 if paused:
                     self._mark_paused_locked(job)
                 else:
@@ -1498,7 +1515,8 @@ class DownloadManager(
             with self._lock:
                 job = self._require_job(job_id)
                 cancelled = cancel_event.is_set() or job.cancel_requested
-                paused = job.pause_requested
+                # cancel 与 pause 同时到达时以 cancel 为准（见上方注释）。
+                paused = job.pause_requested and not job.cancel_requested
                 if cancelled:
                     if paused:
                         self._mark_paused_locked(job)

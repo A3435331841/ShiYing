@@ -25,6 +25,9 @@ document.getElementById("copy").addEventListener("click", async () => {
     await navigator.clipboard.writeText(pairs.join("; "));
     msg.textContent = `已复制 ${pairs.length} 项。回到拾影，粘贴到 Cookie 输入框并保存。`;
   } catch (err) {
-    msg.textContent = "复制失败，请重试。";
+    // 常见失败：未授予剪贴板权限、Cookie 权限被策略禁用。只显示错误类型，
+    // 不回显 Cookie 值等敏感内容。
+    const reason = typeof err?.message === "string" ? err.message.slice(0, 120) : "";
+    msg.textContent = `复制失败${reason ? "：" + reason : ""}。请重试；若持续失败，请确认浏览器允许本扩展读取元宝 Cookie。`;
   }
 });

@@ -2374,3 +2374,37 @@ def test_douyin_discovery_waits_for_scrolled_api_page_before_stability_stop(
         "https://www.douyin.com/video/2222222222222222222",
     ]
     assert result.discovery_complete is True
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        (1, True),
+        (0, False),
+        (True, True),
+        (False, False),
+        ("0", False),
+        ("1", True),
+        ("true", True),
+        ("false", False),
+        (None, None),
+        ({"unexpected": 1}, None),
+    ],
+)
+def test_parse_profile_awemes_has_more_type_tolerance(raw, expected) -> None:
+    """浏览器路径的 has_more 必须按值判读，禁止 bool("0") 恒真。"""
+
+    profile_id = "MS4wLjABAAAA DeterministicOwner"
+    data = {
+        "aweme_list": [
+            {
+                "aweme_id": "1111111111111111111",
+                "author": {"sec_uid": profile_id, "nickname": "Author"},
+            }
+        ],
+        "has_more": raw,
+    }
+
+    entries, authors, has_more = _parse_profile_awemes(data, profile_id)
+
+    assert has_more is expected

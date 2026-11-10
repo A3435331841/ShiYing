@@ -266,7 +266,19 @@ def _parse_profile_awemes(
         if aweme_id.isdigit():
             entries.append((aweme_id, f"https://www.douyin.com/video/{aweme_id}"))
     has_more = data.get("has_more")
-    return entries, authors, bool(has_more) if has_more is not None else None
+    if has_more is None:
+        return entries, authors, None
+    if isinstance(has_more, bool):
+        has_more_flag: bool | None = has_more
+    elif isinstance(has_more, int):
+        has_more_flag = has_more != 0
+    elif isinstance(has_more, str):
+        has_more_flag = has_more.strip().lower() in {"1", "true"}
+    else:
+        # 未知形态按"未知"处理，交给 stable_rounds 兜底，
+        # 避免 bool("0") 为真导致终止页永远等不到。
+        has_more_flag = None
+    return entries, authors, has_more_flag
 
 
 def quality_floor_dimensions(
@@ -1055,7 +1067,10 @@ def _cookie_jar_to_playwright(cookie_jar: CookieJar) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     now = time.time()
     for cookie in cookie_jar:
-        if not cookie.domain.endswith("douyin.com"):
+        # 与 douyin_signing 的同名转换保持一致的严格匹配：
+        # 精确 douyin.com 或点前缀子域，大小写不敏感，杜绝 "fakedouyin.com"。
+        domain = (cookie.domain or "").lower().lstrip(".")
+        if domain != "douyin.com" and not domain.endswith(".douyin.com"):
             continue
         item: dict[str, Any] = {
             "name": cookie.name,
@@ -1286,7 +1301,17 @@ def discover_profile(
                     should_cancel,
                 )
                 if browser_cookies:
-                    context.add_cookies(browser_cookies)
+                    try:
+                        context.add_cookies(browser_cookies)
+                    except Exception as exc:
+                        # Cookie jar 中存在浏览器拒绝写入的条目属于本地登录态
+                        # 数据问题，不应伪装成站点响应变化。
+                        raise DiscoveryError(
+                            "The bound Chrome cookies could not be loaded into "
+                            "the discovery browser. Refresh the Chrome login "
+                            "session for Douyin and retry.",
+                            issue_code=SiteIssueCode.COOKIE_UNAVAILABLE,
+                        ) from exc
                     _profile_discovery_budget_remaining(
                         progress_budget,
                         should_cancel,
@@ -1373,7 +1398,13 @@ def discover_profile(
                         if not metadata or not is_complete_profile_media_metadata(
                             metadata[1], aweme_id, profile_id
                         ):
-                            incomplete_media_ids.add(aweme_id)
+                            # 元数据采纳是先写优先；已验证过的重复条目出现降级
+                            # 副本时，不应把该 id 重新标记为不完整而否决整个发现。
+                            if (
+                                aweme_id not in media_metadata
+                                and aweme_id not in verified_metadata
+                            ):
+                                incomplete_media_ids.add(aweme_id)
                             continue
                         verified_metadata.setdefault(*metadata)
                         incomplete_media_ids.discard(aweme_id)

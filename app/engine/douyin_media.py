@@ -92,11 +92,18 @@ class DouyinMediaMixin:
             if not media:
                 raise TemporaryAccessError("公开会话未取得经过校验的完整作品数据，请稍后重试。", issue_code=SiteIssueCode.SITE_RESPONSE_CHANGED)
             author = str(media.get("author") or "抖音作者")
+            create_time = media.get("create_time")
             item = DownloadItem(
                 id=_item_key(Platform.DOUYIN, expected_id, url, 1),
                 media_id=expected_id, source_url=url,
                 title=str(media.get("title") or "抖音作品"),
-                upload_date=self._douyin_upload_date(media["create_time"]),
+                # create_time 在元数据生产方是可选字段（校验器不强制），
+                # 缺失时不得让命名时间戳的 KeyError 绕过整个错误分类体系。
+                upload_date=(
+                    self._douyin_upload_date(create_time)
+                    if type(create_time) is int and create_time > 0
+                    else None
+                ),
                 author=author, playlist_index=1, extractor_key="Douyin",
                 media_type=MediaType.IMAGE if media.get("media_kind") == "image" else MediaType.VIDEO,
                 metadata={"verification_url": url, "item_identity_verified": True,

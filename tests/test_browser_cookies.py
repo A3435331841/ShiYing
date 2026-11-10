@@ -393,3 +393,24 @@ def test_profile_cookie_access_failure_never_silently_falls_back(
         discover(url)
 
     assert "verification page is not required" in str(error.value)
+
+
+def test_douyin_cookie_conversion_rejects_lookalike_and_accepts_case_forms() -> None:
+    """douyin 域匹配必须与签名层同样严格：杜绝仿冒域，兼容大小写。"""
+
+    result = douyin_cookies(
+        [
+            FakeCookie("fakedouyin.com", 2_000_000_000),
+            FakeCookie("douyin.com.evil.test", 2_000_000_000),
+            FakeCookie("DOUYIN.com", 2_000_000_000),
+            FakeCookie(".douyin.com", 2_000_000_000),
+            FakeCookie("www.douyin.com", 2_000_000_000),
+        ]
+    )
+
+    domains = [entry["domain"] for entry in result]
+    assert "DOUYIN.com" in domains
+    assert ".douyin.com" in domains
+    assert "www.douyin.com" in domains
+    assert "fakedouyin.com" not in domains
+    assert "douyin.com.evil.test" not in domains

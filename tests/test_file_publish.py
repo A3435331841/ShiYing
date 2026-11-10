@@ -1,4 +1,5 @@
 import errno
+import stat
 from concurrent.futures import ThreadPoolExecutor
 from threading import Barrier
 
@@ -355,3 +356,49 @@ def test_publish_or_reuse_identical_handles_long_numbered_names(tmp_path, monkey
     assert published == destination
     assert destination.read_bytes() == b"our download"
     assert "video (11).mp4" not in probed
+
+
+def test_published_file_gets_world_readable_permissions_on_posix(
+    tmp_path, monkeypatch
+):
+    """mkstemp 产物 0600：POSIX 上发布后应为 0644（同机其他用户可读）。"""
+    import os
+
+    from app import file_publish
+
+    monkeypatch.setattr(file_publish.os, "name", "posix")
+    source = tmp_path / "staged.mp4"
+    source.write_bytes(b"published media")
+    destination = tmp_path / "final.mp4"
+
+    file_publish.publish_no_replace(source, destination)
+
+    mode = stat.S_IMODE(destination.stat().st_mode)
+    # 平台对位的确切映射不同（Windows 只区分只读位）；要验证的是
+    # mkstemp 的 0600 默认已被覆盖、属主可写保留。
+    assert mode != 0o600
+    assert mode & 0o200
+    assert not source.exists()
+
+
+def test_published_permissions_best_effort_on_chmod_failure(
+    tmp_path, monkeypatch
+):
+    """chmod 失败不得让已成功的发布报错。"""
+    import os
+
+    from app import file_publish
+
+    monkeypatch.setattr(file_publish.os, "name", "posix")
+
+    def failing_chmod(path, mode):
+        raise PermissionError("read-only volume")
+
+    monkeypatch.setattr(file_publish.os, "chmod", failing_chmod)
+    source = tmp_path / "staged.mp4"
+    source.write_bytes(b"published media")
+    destination = tmp_path / "final.mp4"
+
+    file_publish.publish_no_replace(source, destination)
+
+    assert destination.read_bytes() == b"published media"

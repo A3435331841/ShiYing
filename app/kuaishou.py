@@ -1190,11 +1190,12 @@ def discover(
                     issue_code=SiteIssueCode.NETWORK_ERROR,
                 ) from exc
 
-            def renavigate(target: str) -> None:
-                # 重导航失败不应让裸 PlaywrightError 穿透分类：
-                # 优先上报观察器已记录的分类错误，其次归为网络错误。
+            def guarded_page(action):
+                """观察循环内的页面交互（title/evaluate/滚动/等待）失败同样
+                走分类出口：优先上报观察器已记录的分类错误，其次归为网络
+                错误，不让裸 PlaywrightError 穿透。"""
                 try:
-                    page.goto(target, wait_until="domcontentloaded", timeout=30_000)
+                    return action()
                 except Exception as exc:
                     if should_cancel():
                         raise DownloadCancelledError("Task cancelled") from exc
@@ -1205,6 +1206,14 @@ def discover(
                         "proxy and network.",
                         issue_code=SiteIssueCode.NETWORK_ERROR,
                     ) from exc
+
+            def renavigate(target: str) -> None:
+                # 重导航失败不应让裸 PlaywrightError 穿透分类（见 guarded_page）。
+                guarded_page(
+                    lambda: page.goto(
+                        target, wait_until="domcontentloaded", timeout=30_000
+                    )
+                )
 
             idle = 0
             previous_count = -1
@@ -1247,7 +1256,7 @@ def discover(
                     while waited < delay:
                         if should_cancel():
                             raise DownloadCancelledError("Task cancelled")
-                        page.wait_for_timeout(200)
+                        guarded_page(lambda: page.wait_for_timeout(200))
                         waited += 0.2
                     interruption.clear()
                     # Resume pagination rather than restarting the walk; the
@@ -1256,7 +1265,7 @@ def discover(
                     previous_count = len(collector.videos) if collector else -1
                     continue
                 if any(
-                    marker in page.title().lower()
+                    marker in guarded_page(lambda: page.title()).lower()
                     for marker in ("domain blocked", "website filtered")
                 ):
                     raise TemporaryAccessError(
@@ -1286,12 +1295,16 @@ def discover(
                 elif final_url != page.url:
                     renavigate(final_url)
                     continue
-                state = page.evaluate(
-                    "() => window.APOLLO_STATE || window.__APOLLO_STATE__ || {}"
+                state = guarded_page(
+                    lambda: page.evaluate(
+                        "() => window.APOLLO_STATE || window.__APOLLO_STATE__ || {}"
+                    )
                 )
                 if kind == "item":
                     if urlsplit(final_url).hostname in {"m.gifshow.com", "m.kuaishou.com", "c.kuaishou.com"} or (urlsplit(final_url).hostname or "").endswith(".m.chenzhongtech.com"):
-                        mobile_state = page.evaluate("() => window.INIT_STATE || {}")
+                        mobile_state = guarded_page(
+                            lambda: page.evaluate("() => window.INIT_STATE || {}")
+                        )
                         video = mobile_page_video(mobile_state, identity)
                         if video:
                             return Result([video], kind, identity)
@@ -1335,23 +1348,25 @@ def discover(
                         break
                     # Scroll the site's real list. Its own JavaScript generates
                     # pagination requests; no signatures or private API replay.
-                    page.evaluate("""() => {
+                    guarded_page(lambda: page.evaluate("""() => {
                       window.scrollTo(0, document.documentElement.scrollHeight);
                       for (const element of document.querySelectorAll('div,main,section')) {
                         const style = getComputedStyle(element);
                         if (/(auto|scroll)/.test(style.overflowY) && element.scrollHeight > element.clientHeight + 100)
                           element.scrollTop = element.scrollHeight;
                       }
-                    }""")
+                    }"""))
                 if time.monotonic() - started > 20 and not (
                     collector and collector.videos
                 ):
                     # A caption/comment may contain words such as "deleted" or
                     # "captcha". Only explicit site dialogs/error containers
                     # are evidence of a challenge, not the entire body text.
-                    notices = page.locator(
-                        "[role='dialog'], [class*='captcha'], [class*='error-page'], [class*='empty-page']"
-                    ).all_inner_texts()
+                    notices = guarded_page(
+                        lambda: page.locator(
+                            "[role='dialog'], [class*='captcha'], [class*='error-page'], [class*='empty-page']"
+                        ).all_inner_texts()
+                    )
                     for notice in notices[:10]:
                         response_error({"message": notice[:4000]}, url)
                     if kind != "profile":
@@ -1359,7 +1374,7 @@ def discover(
                 for _ in range(5):
                     if should_cancel():
                         raise DownloadCancelledError("Task cancelled")
-                    page.wait_for_timeout(200)
+                    guarded_page(lambda: page.wait_for_timeout(200))
             if errors:
                 raise errors[0]
             interrupted = bool(interruption) or interrupted_reason is not None

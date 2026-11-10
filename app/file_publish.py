@@ -1,4 +1,5 @@
 """Publish a verified file without overwriting an existing file."""
+import contextlib
 import errno
 import os
 import stat
@@ -8,6 +9,16 @@ from pathlib import Path
 # ponytail: one process-wide lock serializes pair-name selection; use
 # per-directory locks if concurrent album publication becomes a bottleneck.
 _PAIR_NAME_LOCK = threading.Lock()
+
+
+def _apply_published_permissions(path: Path) -> None:
+    """mkstemp 产物是 0600；发布的媒体应对同机其他用户可读（0644）。
+    Windows 的属性模型不同，跳过。权限为尽力而为：发布本身已成功，
+    chmod 失败不应让下载报错。"""
+    if os.name == "nt":
+        return
+    with contextlib.suppress(OSError):
+        os.chmod(path, 0o644)
 
 
 def publish_no_replace(temporary: Path, destination: Path) -> None:
@@ -23,6 +34,7 @@ def publish_no_replace(temporary: Path, destination: Path) -> None:
         os.rename(temporary, destination)
         return
     temporary.unlink()
+    _apply_published_permissions(destination)
 
 
 def publish_unique(temporary: Path, destination: Path) -> Path:

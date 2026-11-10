@@ -60,7 +60,7 @@ from ..kuaishou import discover as discover_kuaishou
 from ..kuaishou import is_media_url as is_kuaishou_media_url
 from ..kuaishou import source_identity as kuaishou_source_identity
 from ..bilibili_opus import is_trusted_bilibili_asset_url
-from ..platforms import identify_url
+from ..platforms import UnsupportedUrlError, identify_url
 from ..file_publish import publish_no_replace, publish_pair_image, publish_unique
 from ..xiaohongshu import RemoteAsset, discover_profile as discover_xhs_profile
 from ..xiaohongshu import (
@@ -425,6 +425,13 @@ class DiscoveryMixin:
                     response.close()
             except DiscoveryError:
                 raise
+            except UnsupportedUrlError as exc:
+                # 短链跳到了非作品地址（常见于分享链接过期后回首页），
+                # 网络本身没问题，不应归为网络错误误导用户。
+                raise DiscoveryError(
+                    "小红书分享链接可能已过期或未指向作品，请从小红书重新复制分享链接。",
+                    issue_code=SiteIssueCode.CONTENT_UNAVAILABLE,
+                ) from exc
             except Exception as exc:
                 raise DiscoveryError(
                     "无法解析小红书分享链接，请检查网络并重新复制链接。",

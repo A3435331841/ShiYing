@@ -10649,3 +10649,42 @@ def test_xhs_missing_live_media_keeps_static_and_does_not_complete(monkeypatch, 
         engine.download_item(item, Platform.XIAOHONGSHU, tmp_path, callback=events.append)
     assert [event.output_paths for event in events if event.event == 'asset_completed'][-1] == [str(tmp_path / 'still.webp')]
     assert not any(event.event == 'completed' for event in events)
+
+
+def test_xiaohongshu_expired_share_link_reports_content_unavailable(
+    monkeypatch,
+) -> None:
+    """短链过期回首页时应提示链接问题并归类 content_unavailable，而非网络错误。"""
+
+    class HomeRedirectResponse:
+        status_code = 307
+        headers = {"Location": "http://www.xiaohongshu.com/"}
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(
+        "app.engine.discovery.requests.get",
+        lambda *args, **kwargs: HomeRedirectResponse(),
+    )
+    engine = MediaDownloader(DownloaderConfig())
+    with pytest.raises(DiscoveryError) as excinfo:
+        engine._resolve_short_url("https://xhslink.com/8FugXY6yiE")
+    assert "已过期或未指向作品" in str(excinfo.value)
+    assert excinfo.value.issue_code is SiteIssueCode.CONTENT_UNAVAILABLE
+
+
+def test_xiaohongshu_share_link_network_failure_keeps_network_error(
+    monkeypatch,
+) -> None:
+    """真正的网络故障仍应归为 network_error。"""
+
+    def boom(*args, **kwargs):
+        raise ConnectionError("connection reset")
+
+    monkeypatch.setattr("app.engine.discovery.requests.get", boom)
+    engine = MediaDownloader(DownloaderConfig())
+    with pytest.raises(DiscoveryError) as excinfo:
+        engine._resolve_short_url("https://xhslink.com/abcdefgh")
+    assert "请检查网络" in str(excinfo.value)
+    assert excinfo.value.issue_code is SiteIssueCode.NETWORK_ERROR

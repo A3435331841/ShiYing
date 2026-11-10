@@ -34,11 +34,12 @@ SAMPLES = [
     ("快手", "普通视频", "https://v.kuaishou.com/K4HGpAeI"),
     ("快手", "横版图集", "https://v.kuaishou.com/nnsTg7n9"),
     ("快手", "竖版长图（已知仅切片）", "https://v.kuaishou.com/EYhNCZ"),
-    # 2026-11-11 实测：下方图文短链已过期（预览返回网络错误类提示，行为正确）；
-    # 视频样本为旧式短 ID（现行分享链接均为 24 位十六进制，应用按此识别），
-    # 无法匿名验证该 URL 是否仍有效；运行前请换成新复制的分享链接。
-    ("小红书", "图文（短链样本已过期）", "https://xhslink.com/AH3CnLCUzyN"),
-    ("小红书", "视频（旧式短ID样本，待更新）", "https://www.xiaohongshu.com/explore/8FugXY6yiE"),
+    # 2026-11-11 实测：下方两条小红书短链均已过期（307 回首页，预览返回可行动
+    # 提示，产品行为正确）。历史记录中 8FugXY6yiE 是分享短链 slug，曾被误拼为
+    # /explore/ 路径——短链 slug 必须走 xhslink 域名，不能当作笔记 ID 使用。
+    # 运行前请换成新复制的分享链接。
+    ("小红书", "图文（短链已过期，换新链接）", "https://xhslink.com/AH3CnLCUzyN"),
+    ("小红书", "视频（短链已过期，换新链接）", "https://xhslink.com/8FugXY6yiE"),
     ("小红书", "实况图", "https://xhslink.cn/o/2JXQbZCrUf9"),
     ("视频号", "用户样本（需已保存元宝登录态）", "https://weixin.qq.com/sph/A2uumghDtJ"),
 ]

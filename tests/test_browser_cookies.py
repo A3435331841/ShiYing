@@ -414,3 +414,47 @@ def test_douyin_cookie_conversion_rejects_lookalike_and_accepts_case_forms() -> 
     assert "www.douyin.com" in domains
     assert "fakedouyin.com" not in domains
     assert "douyin.com.evil.test" not in domains
+
+
+def test_singular_profile_selection_rejects_empty_cookie_name(tmp_path: Path) -> None:
+    """单数版选择 API 与复数版一致：空 cookie 名不是有效登录态。"""
+
+    assert select_chrome_profile_with_cookie(
+        "xiaohongshu.com", "", user_data_dir=tmp_path
+    ) is None
+
+
+def test_sharing_violation_diagnoses_as_database_locked() -> None:
+    """Windows WinError 32（共享冲突，errno 映射为 EACCES）应引导用户退出
+    Chrome，而不是被误判为权限问题。"""
+    import errno
+
+    error = OSError(errno.EACCES, "The process cannot access the file because "
+                    "it is being used by another process")
+    error.winerror = 32
+
+    from app.browser import _cookie_system_diagnostic
+
+    assert _cookie_system_diagnostic(error) == "cookie_database_locked"
+
+
+def test_xiaohongshu_cookie_conversion_rejects_lookalike_domains() -> None:
+    """xiaohongshu 的 Cookie→Playwright 转换与 douyin 同标准：
+    杜绝仿冒域，兼容大小写与前导点。"""
+
+    result = xhs_cookies(
+        [
+            FakeCookie("fakexiaohongshu.com", 2_000_000_000),
+            FakeCookie("evil-xiaohongshu.com", 2_000_000_000),
+            FakeCookie("XIAOHONGSHU.com", 2_000_000_000),
+            FakeCookie(".xiaohongshu.com", 2_000_000_000),
+            FakeCookie("www.xiaohongshu.com", 2_000_000_000),
+        ]
+    )
+
+    domains = [entry["domain"] for entry in result]
+    assert "XIAOHONGSHU.com" in domains
+    assert ".xiaohongshu.com" in domains
+    assert "www.xiaohongshu.com" in domains
+    assert "fakexiaohongshu.com" not in domains
+    assert "evil-xiaohongshu.com" not in domains

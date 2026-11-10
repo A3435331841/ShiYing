@@ -390,7 +390,12 @@ def _cookie_jar_to_playwright(cookie_jar: CookieJar) -> list[dict[str, Any]]:
     result: list[dict[str, Any]] = []
     now = time.time()
     for cookie in cookie_jar:
-        if not cookie.domain.endswith("xiaohongshu.com"):
+        # 与 douyin/signing 的同名转换保持一致的严格匹配：
+        # 精确 xiaohongshu.com 或点前缀子域，大小写不敏感，杜绝仿冒域。
+        domain = (cookie.domain or "").lower().lstrip(".")
+        if domain != "xiaohongshu.com" and not domain.endswith(
+            ".xiaohongshu.com"
+        ):
             continue
         item: dict[str, Any] = {
             "name": cookie.name,

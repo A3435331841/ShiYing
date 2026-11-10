@@ -121,6 +121,11 @@ def _cookie_exception_chain(error: BaseException | None) -> list[BaseException]:
 def _cookie_system_diagnostic(error: BaseException) -> str | None:
     """Use numeric system errors before inspecting potentially private text."""
     if isinstance(error, OSError):
+        if getattr(error, "winerror", None) == 32:
+            # ERROR_SHARING_VIOLATION 在 Windows 上映射为 EACCES，但它
+            # 的真实含义是"Chrome 正在运行、数据库被占用"，应引导用户
+            # 退出 Chrome 而不是检查 ACL。
+            return "cookie_database_locked"
         if error.errno in {errno.EACCES, errno.EPERM}:
             return "cookie_permission_denied"
         if error.errno in {
@@ -341,6 +346,9 @@ def select_chrome_profile_with_cookie(
     user_data_dir: str | Path | None = None,
     now: float | None = None,
 ) -> str | None:
+    if not cookie_name:
+        # 与复数版保持一致：空 cookie 名不是有效登录态。
+        return None
     root = (
         Path(user_data_dir).expanduser()
         if user_data_dir is not None
@@ -466,46 +474,59 @@ def open_chrome(url: str, profile_directory: str | None = None) -> None:
             command = [str(executable), profile_argument, url]
         else:
             command = ["/usr/bin/open", "-a", "Google Chrome", url]
-        subprocess.Popen(
-            command,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
+        try:
+            subprocess.Popen(
+                command,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        except OSError as exc:
+            raise RuntimeError("Google Chrome was not found") from exc
         return
     if sys.platform.startswith("win"):
+        # 环境变量缺失时 Path("") 会退化为相对 CWD 的路径；保持 None 跳过。
+        def windows_candidate(root_env: str, relative: str) -> str | None:
+            root = os.environ.get(root_env)
+            return str(Path(root) / relative) if root else None
+
         candidates = [
             shutil.which("chrome.exe"),
             shutil.which("chrome"),
-            str(
-                Path(os.environ.get("LOCALAPPDATA", ""))
-                / "Google/Chrome/Application/chrome.exe"
-            ),
-            str(
-                Path(os.environ.get("PROGRAMFILES", ""))
-                / "Google/Chrome/Application/chrome.exe"
-            ),
-            str(
-                Path(os.environ.get("PROGRAMFILES(X86)", ""))
-                / "Google/Chrome/Application/chrome.exe"
+            windows_candidate("LOCALAPPDATA", "Google/Chrome/Application/chrome.exe"),
+            windows_candidate("PROGRAMFILES", "Google/Chrome/Application/chrome.exe"),
+            windows_candidate(
+                "PROGRAMFILES(X86)", "Google/Chrome/Application/chrome.exe"
             ),
         ]
+        # PATHEXT 可能让 which("chrome") 解析到 chrome.bat/cmd（其参数会被
+        # cmd.exe 二次解析）；只接受真实可执行映像。
+        candidates = [
+            candidate
+            for candidate in candidates
+            if candidate and candidate.lower().endswith(".exe")
+        ]
         for candidate in candidates:
-            if candidate and Path(candidate).is_file():
+            if Path(candidate).is_file():
                 command = [candidate]
                 if profile_argument:
                     command.append(profile_argument)
                 command.append(url)
-                subprocess.Popen(
-                    command,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                    creationflags=(
-                        subprocess.CREATE_NEW_PROCESS_GROUP
-                        | subprocess.DETACHED_PROCESS
-                        | subprocess.CREATE_BREAKAWAY_FROM_JOB
-                    ),
-                )
+                try:
+                    subprocess.Popen(
+                        command,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                        creationflags=(
+                            subprocess.CREATE_NEW_PROCESS_GROUP
+                            | subprocess.DETACHED_PROCESS
+                            | subprocess.CREATE_BREAKAWAY_FROM_JOB
+                        ),
+                    )
+                except OSError:
+                    # 例如父进程处于不允许 breakaway 的 Job 对象；换下一候选，
+                    # 全部失败时按契约抛 RuntimeError 而非让 OSError 逃逸。
+                    continue
                 return
         raise RuntimeError("Google Chrome was not found")
     for executable in (

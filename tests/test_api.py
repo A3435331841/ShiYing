@@ -894,3 +894,14 @@ def test_safe_thumbnail_path_blocks_traversal_and_accepts_valid_ids():
         with pytest.raises(HTTPException):
             _safe_thumbnail_path(hostile)
 
+
+
+def test_stop_token_matches_rejects_non_ascii_without_error() -> None:
+    """含非 ASCII 字符的 token 头应判为不匹配（403），而非让
+    compare_digest 抛 TypeError 变成 500。"""
+    from app.main import _stop_token_matches
+
+    assert _stop_token_matches("runtime_secret_" + "d" * 32, "runtime_secret_" + "d" * 32) is True
+    assert _stop_token_matches("", "runtime_secret_") is False
+    assert _stop_token_matches("café" + "d" * 32, "runtime_secret_" + "d" * 32) is False
+    assert _stop_token_matches("wrong_" + "d" * 32, "runtime_secret_" + "d" * 32) is False

@@ -111,3 +111,33 @@ def test_legacy_wechat_creation_is_retired(app_manager):
     )
     assert response.status_code == 410
     assert "首页" in response.json()["detail"]
+
+
+def test_existing_job_lookup_normalizes_host_and_youtu_be(app_manager):
+    """www/非 www 与 youtu.be 短链必须与规范形态判为同一作品，
+    否则重复检测静默放行第二个任务。"""
+    job = _job(
+        Path("."),
+        source_url="https://xiaohongshu.com/explore/6411cf99000000001300b6d9",
+        platform=Platform.XIAOHONGSHU,
+    )
+    app_manager._jobs[job.id] = job
+    client = TestClient(main.app, base_url="http://localhost")
+
+    found = client.get(
+        "/api/jobs/exists",
+        params={"url": "https://www.xiaohongshu.com/explore/6411cf99000000001300b6d9"},
+    ).json()
+    assert found["exists"] is True
+
+    yt_job = _job(
+        Path("."),
+        source_url="https://www.youtube.com/watch?v=abcdefghijk",
+        platform=Platform.YOUTUBE,
+    )
+    app_manager._jobs[yt_job.id] = yt_job
+    short = client.get(
+        "/api/jobs/exists",
+        params={"url": "https://youtu.be/abcdefghijk"},
+    ).json()
+    assert short["exists"] is True

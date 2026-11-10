@@ -453,6 +453,15 @@ def _request_process_stop() -> None:
     RUNTIME_STOP_EVENT.set()
 
 
+def _stop_token_matches(supplied_token: str, expected_token: str) -> bool:
+    """常时比较前先拒绝非 ASCII：compare_digest 对其抛 TypeError
+    （请求头按 latin-1 解码可含 U+0080-U+00FF），会把本应 403 的
+    探测变成 500。"""
+    if not supplied_token or not supplied_token.isascii():
+        return False
+    return secrets.compare_digest(supplied_token, expected_token)
+
+
 @app.post("/api/runtime/stop")
 def stop_runtime(request: Request) -> dict[str, str]:
     client_host = request.client.host if request.client is not None else ""
@@ -466,10 +475,7 @@ def stop_runtime(request: Request) -> dict[str, str]:
             status_code=503,
             detail="This runtime was not started with a stop token",
         )
-    if not supplied_token or not secrets.compare_digest(
-        supplied_token,
-        expected_token,
-    ):
+    if not _stop_token_matches(supplied_token, expected_token):
         raise HTTPException(status_code=403, detail="Invalid runtime stop token")
 
     threading.Thread(
@@ -541,9 +547,9 @@ def cache_status() -> dict:
 
 @app.post("/api/cache/clear")
 def clear_cache() -> dict:
-    # Re-check and delete under the manager lock: a job submitted between the
-    # busy check and the deletion would otherwise have its cache data removed
-    # while queued (TOCTOU).
+    # 忙检查与条目快照在管理器锁内完成；慢速的删除 IO 在锁外按快照执行。
+    # 快照之后才创建的缓存条目不在快照里，不会被误删——"提交即清缓存"
+    # 的 TOCTOU 仍被排除，而 /api/jobs 等接口不再被数秒的磁盘 IO 阻塞。
     with manager._lock:
         busy = [job for job in manager.list_jobs() if job.status in _CACHE_BUSY_STATUSES]
         if busy:
@@ -554,15 +560,15 @@ def clear_cache() -> dict:
                 ),
             )
         _, freed = _cache_usage()
-        if CACHE_DIR.is_dir():
-            for entry in CACHE_DIR.iterdir():
-                try:
-                    if entry.is_symlink() or entry.is_file():
-                        entry.unlink(missing_ok=True)
-                    else:
-                        shutil.rmtree(entry, ignore_errors=True)
-                except OSError:
-                    continue
+        snapshot = list(CACHE_DIR.iterdir()) if CACHE_DIR.is_dir() else []
+    for entry in snapshot:
+        try:
+            if entry.is_symlink() or entry.is_file():
+                entry.unlink(missing_ok=True)
+            else:
+                shutil.rmtree(entry, ignore_errors=True)
+        except OSError:
+            continue
     return {"freed_bytes": freed, "files": _cache_usage()[0]}
 
 
@@ -678,17 +684,27 @@ def start_job_with_selection(job_id: str, request: StartJobRequest):
 
 
 def _source_key(platform: Platform, url: str) -> str:
-    """Stable identity for duplicate detection, ignoring tracking parameters."""
+    """Stable identity for duplicate detection, ignoring tracking parameters.
+
+    主机名小写并剥掉 "www." 前缀：www.xiaohongshu.com 与 xiaohongshu.com
+    必须判为同一作品，否则重复检测会静默放行第二个任务。
+    """
 
     parsed = urlsplit(url)
     path = parsed.path.rstrip("/")
+    host = parsed.netloc.lower()
+    if host.startswith("www."):
+        host = host[4:]
     if platform == Platform.YOUTUBE:
         video_id = dict(parse_qsl(parsed.query)).get("v")
         if video_id:
             return f"youtube:{video_id}"
         if path.startswith("/shorts/"):
             return f"youtube:shorts:{path.rsplit('/', 1)[-1]}"
-    return f"{platform.value}:{parsed.netloc.lower()}{path}"
+        if host == "youtu.be" and path:
+            # youtu.be/<id> 与 watch?v=<id> 是同一作品。
+            return f"youtube:{path.lstrip('/')}"
+    return f"{platform.value}:{host}{path}"
 
 
 @app.get("/api/jobs/exists")

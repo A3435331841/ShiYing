@@ -1,0 +1,90 @@
+name: Portable Douyin live smoke
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - codex/portable-live-smoke
+    paths:
+      - app/**
+      - scripts/douyin_portable_live_smoke.py
+      - requirements.txt
+      - .github/workflows/portable-live-smoke.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: portable-douyin-live-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  live-download:
+    name: ${{ matrix.os }} / no-cookie full download
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        os:
+          - macos-14
+          - ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.10"
+          cache: pip
+      - name: Install FFprobe
+        shell: bash
+        run: |
+          if ! command -v ffprobe >/dev/null 2>&1; then
+            if [[ "$RUNNER_OS" == "macOS" ]]; then
+              brew install ffmpeg
+            else
+              sudo apt-get update
+              sudo apt-get install -y ffmpeg
+            fi
+          fi
+          ffprobe -version
+      - name: Install Python dependencies
+        run: |
+          python -m pip install -r requirements.txt
+          python -m pip check
+      - name: Verify production Chrome channel
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "macOS" ]]; then
+            chrome_binary="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+          else
+            chrome_binary="$(command -v google-chrome || command -v google-chrome-stable || true)"
+          fi
+          if [[ -z "$chrome_binary" || ! -x "$chrome_binary" ]]; then
+            echo "Google Chrome is not available at the runner's standard installation path." >&2
+            exit 1
+          fi
+          "$chrome_binary" --version
+          python - <<'PY'
+          from playwright.sync_api import sync_playwright
+
+          with sync_playwright() as playwright:
+              browser = playwright.chromium.launch(channel="chrome", headless=True)
+              print(f"Playwright production Chrome channel: {browser.version}")
+              browser.close()
+          PY
+      - name: Run no-cookie production download smoke
+        shell: bash
+        run: |
+          python scripts/douyin_portable_live_smoke.py \
+            --report "$RUNNER_TEMP/douyin-portable-live-report.json"
+      - name: Upload sanitized smoke report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: douyin-portable-live-${{ matrix.os }}
+          path: ${{ runner.temp }}/douyin-portable-live-report.json
+          if-no-files-found: error
+          retention-days: 7

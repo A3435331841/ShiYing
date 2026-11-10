@@ -1,0 +1,18 @@
+{
+  "key": "bilibili",
+  "name": "哔哩哔哩-弹幕番剧直播高清视频",
+  "publisher": "Shanghai Bilibili Animation Co.,Ltd",
+  "source_page": "https://apps.apple.com/cn/app/%E5%93%94%E5%93%A9%E5%93%94%E5%93%A9-%E5%BC%B9%E5%B9%95%E7%95%AA%E5%89%A7%E7%9B%B4%E6%92%AD%E9%AB%98%E6%B8%85%E8%A7%86%E9%A2%91/id736536022?uo=4",
+  "metadata_url": "https://itunes.apple.com/lookup?id=736536022&country=cn",
+  "metadata_artwork_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/b7/70/99/b7709979-0703-0722-b561-c97b2bf5b644/AppIcon-0-0-1x_U007epad-0-1-0-sRGB-85-220.png/512x512bb.jpg",
+  "asset_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/b7/70/99/b7709979-0703-0722-b561-c97b2bf5b644/AppIcon-0-0-1x_U007epad-0-1-0-sRGB-85-220.png/512x512bb.png",
+  "resolved_asset_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/b7/70/99/b7709979-0703-0722-b561-c97b2bf5b644/AppIcon-0-0-1x_U007epad-0-1-0-sRGB-85-220.png/512x512bb.png",
+  "original_file": "bilibili\\original.png",
+  "format": "PNG",
+  "size": [
+    512,
+    512
+  ],
+  "sha256": "04f5c1e818c0d9ca6253a33a1fbd2d042cfa39ab051d7bc890eac9e247a3b593",
+  "downloaded_on": "2026-11-10"
+}

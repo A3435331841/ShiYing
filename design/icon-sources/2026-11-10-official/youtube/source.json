@@ -1,0 +1,18 @@
+{
+  "key": "youtube",
+  "name": "YouTube",
+  "publisher": "Google LLC",
+  "source_page": "https://apps.apple.com/cn/app/youtube/id544007664?uo=4",
+  "metadata_url": "https://itunes.apple.com/lookup?id=544007664&country=cn",
+  "metadata_artwork_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/84/80/65/84806526-8b53-6e37-8e01-8369c879d30a/logo_youtube_2024_q4_color-0-0-1x_U007emarketing-0-0-0-7-0-0-0-85-220.png/512x512bb.jpg",
+  "asset_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/84/80/65/84806526-8b53-6e37-8e01-8369c879d30a/logo_youtube_2024_q4_color-0-0-1x_U007emarketing-0-0-0-7-0-0-0-85-220.png/512x512bb.png",
+  "resolved_asset_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/84/80/65/84806526-8b53-6e37-8e01-8369c879d30a/logo_youtube_2024_q4_color-0-0-1x_U007emarketing-0-0-0-7-0-0-0-85-220.png/512x512bb.png",
+  "original_file": "youtube\\original.png",
+  "format": "PNG",
+  "size": [
+    512,
+    512
+  ],
+  "sha256": "3bc649ef5878eeb2906a2e8ecbb85d3bf350fa5b2d8650fd66679895a034d8e8",
+  "downloaded_on": "2026-11-10"
+}

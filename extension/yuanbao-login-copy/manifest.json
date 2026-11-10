@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "拾影 - 元宝登录态复制",
+  "version": "1.0.0",
+  "description": "点一下，把元宝网站的登录态复制到剪贴板，再粘贴到拾影中即可。",
+  "permissions": ["cookies"],
+  "host_permissions": ["https://yuanbao.tencent.com/*", "https://*.tencent.com/*"],
+  "action": {
+    "default_title": "复制元宝登录态",
+    "default_popup": "popup.html"
+  }
+}

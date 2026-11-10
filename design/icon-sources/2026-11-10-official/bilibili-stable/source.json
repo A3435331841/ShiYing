@@ -1,0 +1,16 @@
+{
+  "key": "bilibili",
+  "name": "哔哩哔哩",
+  "publisher": "bilibili",
+  "source_page": "https://app.bilibili.com/",
+  "source_element": "link[rel=apple-touch-icon]",
+  "asset_url": "https://static.hdslb.com/mobile/img/512.png",
+  "original_file": "bilibili-stable/original.png",
+  "format": "PNG",
+  "size": [
+    512,
+    512
+  ],
+  "sha256": "cccf93bd64c30b6c8670cb871460213029d11161555d63eef9ce791c825f2544",
+  "downloaded_on": "2026-11-10"
+}

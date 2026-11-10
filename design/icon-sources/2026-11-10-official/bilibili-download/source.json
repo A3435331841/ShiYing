@@ -1,0 +1,16 @@
+{
+  "key": "bilibili",
+  "name": "哔哩哔哩",
+  "publisher": "bilibili",
+  "source_page": "https://app.bilibili.com/",
+  "source_element": "img.icon",
+  "asset_url": "https://i0.hdslb.com/bfs/activity-plat/static/20220518/49ddaeaba3a23f61a6d2695de40d45f0/2nqyzFm9He.jpeg",
+  "original_file": "bilibili-download/original.jpg",
+  "format": "JPEG",
+  "size": [
+    750,
+    750
+  ],
+  "sha256": "fe4093e91334cfa1ac66881e01979b7bcdcf548640d6b31712f22f0ac9cb5fc8",
+  "downloaded_on": "2026-11-10"
+}

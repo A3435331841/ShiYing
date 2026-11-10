@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="zh-CN" data-ui="shiying">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="app-id" content="__APP_ID__"><meta name="app-version" content="__APP_VERSION__"><meta name="app-build" content="__BUILD_ID__">
+<title>拾影 · 视频下载工具</title><link rel="icon" href="/static/brand.svg" type="image/svg+xml"><link rel="stylesheet" href="/static/home.css">
+<script defer src="/static/app.js?v=__BUILD_ID__"></script><script defer src="/static/task-views.js?v=__BUILD_ID__"></script><script defer src="/static/home.js?v=__BUILD_ID__"></script>
+</head><body>
+<svg class="svg-defs" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs>
+<symbol id="i-home" viewBox="0 0 24 24"><path d="m3 10 9-7 9 7v10H14v-6h-4v6H3z"/></symbol>
+<symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M4 18v3h16v-3"/></symbol>
+<symbol id="i-check" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="m7 12 3 3 7-7"/></symbol>
+<symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7V5h6l3 3h9v12H3z"/></symbol>
+<symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></symbol>
+<symbol id="i-link" viewBox="0 0 24 24"><path d="m9 15 6-6m-6 9-1 1a4.3 4.3 0 0 1-6-6l5-5a4.3 4.3 0 0 1 6 0m-2-2 1-1a4.3 4.3 0 0 1 6 6l-5 5a4.3 4.3 0 0 1-6 0"/></symbol>
+<symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M9 8a3 3 0 0 1 6 0c0 2-3 2-3 5m0 3v1"/></symbol>
+<symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 15A9 9 0 0 1 9 4a9 9 0 1 0 11 11Z"/></symbol>
+<symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2m0 16v2M2 12h2m16 0h2M4.9 4.9l1.4 1.4m11.4 11.4 1.4 1.4M19.1 4.9l-1.4 1.4M6.3 17.7l-1.4 1.4"/></symbol>
+<symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 4v6h-6M4 20v-6h6M5 8a8 8 0 0 1 13-3l2 5M4 14l2 5a8 8 0 0 0 13-3"/></symbol>
+<symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+<symbol id="i-film" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 4v16M17 4v16M3 9h4m-4 6h4m10-6h4m-4 6h4m-11-5 4 2-4 2z"/></symbol>
+<symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></symbol>
+<symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M9 7V5h6v2m-8 0 1 13h8l1-13"/></symbol>
+<symbol id="i-pause" viewBox="0 0 24 24"><path d="M9 5v14M15 5v14"/></symbol>
+<symbol id="i-play" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7z"/></symbol>
+<symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3 2 20h20z"/><path d="M12 9v5m0 3v1"/></symbol>
+<symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 5 6v6c0 4 3 7 7 9 4-2 7-5 7-9V6z"/></symbol>
+</defs></svg>
+<aside class="sidebar" aria-label="主导航">
+  <a class="brand" href="#home" aria-label="拾影首页"><img src="/static/brand.svg" alt="" width="38" height="40"><span><strong>拾影</strong><small>本地视频下载</small></span></a>
+  <nav>
+    <button class="nav-button selected" data-view="home" aria-current="page" aria-label="首页"><svg><use href="#i-home"/></svg><span>首页</span></button>
+    <button class="nav-button" data-view="tasks" aria-label="下载任务"><svg><use href="#i-download"/></svg><span>下载任务</span><span id="nav-count" class="count">0</span></button>
+    <button class="nav-button" data-view="completed" aria-label="已完成"><svg><use href="#i-check"/></svg><span>已完成</span></button>
+  </nav>
+  <div class="sidebar-card" aria-label="下载缓存">
+    <div class="sidebar-card-head">
+      <p class="sidebar-card-title">下载缓存</p>
+      <button id="sidebar-clear-cache" class="sidebar-card-action" type="button" title="清理下载缓存" disabled>清理</button>
+    </div>
+    <p class="sidebar-card-value" id="storage-used">读取中…</p>
+    <p class="sidebar-card-hint">清缓存不影响已下载文件</p>
+  </div>
+  <div class="sidebar-bottom">
+    <button class="nav-button" data-open-settings aria-label="设置" title="设置"><svg><use href="#i-settings"/></svg><span>设置</span></button>
+    <button class="nav-button" data-open-folder aria-label="打开下载目录" title="打开所有下载内容的总目录"><svg><use href="#i-folder"/></svg><span>打开下载目录</span></button>
+    <span class="app-version">v__APP_VERSION__ <span>本地版</span></span>
+  </div>
+</aside>
+<main class="workspace">
+  <header class="topbar">
+    <div class="workspace-title"><h1 id="page-title">工作台</h1><span id="page-subtitle">添加链接，收集喜欢的内容</span></div>
+    <div class="top-actions">
+      <span id="connection" class="connection"><i></i><span>正在连接</span></span>
+      <span class="divider"></span>
+      <button class="icon-button" id="theme-toggle" aria-label="切换深浅主题" title="切换深浅主题"><svg><use href="#i-moon"/></svg></button>
+      <button class="icon-button" id="help-button" aria-label="使用帮助" title="使用帮助"><svg><use href="#i-help"/></svg></button>
+    </div>
+  </header>
+  <section id="composer" class="composer" aria-labelledby="hero-title">
+    <div class="section-head">
+      <div><h2 id="hero-title">添加下载</h2><p>粘贴分享链接或整段文案，自动识别平台；一次最多 50 条。</p></div>
+    </div>
+    <form id="link-form" class="input-card">
+      <div class="input-label"><label for="share-input"><svg><use href="#i-link"/></svg>分享链接</label><button id="paste-button" class="text-button" type="button">粘贴</button></div>
+      <textarea id="share-input" rows="3" maxlength="32768" spellcheck="false" placeholder="https://… 或直接粘贴分享文案" aria-describedby="form-message" required></textarea>
+      <div id="form-message" class="form-message" role="status" hidden>
+        <span id="form-message-text"></span>
+        <button type="button" id="form-message-close" class="form-message-close" aria-label="关闭提示">×</button>
+      </div>
+      <div class="composer-bar">
+        <div class="save-path"><svg><use href="#i-folder"/></svg><span>保存至</span><strong id="save-path" title="下载保存目录">读取中…</strong><button class="text-button" data-open-settings type="button">更改</button></div>
+        <div class="composer-actions"><kbd>Ctrl ↵</kbd><button id="preview-button" class="secondary" type="button" disabled><span>预览选集</span></button><button id="submit-button" class="primary" type="submit" disabled><svg><use href="#i-download"/></svg><span>解析并下载</span></button></div>
+      </div>
+    </form>
+    <div class="platform-row" aria-label="已接入平台，点击打开官网">
+      <a class="platform-chip" href="https://www.douyin.com/" target="_blank" rel="noopener noreferrer" title="在默认浏览器中打开抖音官网"><img class="platform-icon douyin" src="/static/platform-icons/douyin.png" alt="" width="22" height="22" aria-hidden="true">抖音</a>
+      <a class="platform-chip" href="https://jingxuan.douyin.com/" target="_blank" rel="noopener noreferrer" title="在默认浏览器中打开抖音精选官网（应用下载入口）"><img class="platform-icon selected-douyin" src="/static/platform-icons/selected-douyin.png" alt="" width="22" height="22" aria-hidden="true">抖音精选</a>
+      <a class="platform-chip" href="https://www.kuaishou.com/" target="_blank" rel="noopener noreferrer" title="在默认浏览器中打开快手官网"><img class="platform-icon kuaishou" src="/static/platform-icons/kuaishou.png" alt="" width="22" height="22" aria-hidden="true">快手</a>
+      <a class="platform-chip" href="https://channels.weixin.qq.com/" target="_blank" rel="noopener noreferrer" title="在默认浏览器中打开视频号官方入口（视频号助手）；观看作品请在微信内打开视频号"><img class="platform-icon wechat" src="/static/platform-icons/wechat.svg" alt="" width="22" height="22" aria-hidden="true">视频号</a>
+      <a class="platform-chip" href="https://www.xiaohongshu.com/explore" target="_blank" rel="noopener noreferrer" title="在默认浏览器中打开小红书官网"><img class="platform-icon xhs" src="/static/platform-icons/xiaohongshu.png" alt="" width="22" height="22" aria-hidden="true">小红书</a>
+      <a class="platform-chip" href="https://www.bilibili.com/" target="_blank" rel="noopener noreferrer" title="在默认浏览器中打开B站官网"><img class="platform-icon bili" src="/static/platform-icons/bilibili.jpg" alt="" width="22" height="22" aria-hidden="true">B站</a>
+      <a class="platform-chip" href="https://www.youtube.com/" target="_blank" rel="noopener noreferrer" title="在默认浏览器中打开YouTube官网"><img class="platform-icon youtube" src="/static/platform-icons/youtube.png" alt="" width="22" height="22" aria-hidden="true">YouTube</a>
+      <small>支持视频与图文作品 · 点击图标打开官网</small>
+    </div>
+  </section>
+  <section id="tasks-section" class="tasks-section" data-view="home" aria-labelledby="tasks-title">
+    <div class="tasks-heading">
+      <div class="tasks-heading-copy"><h2 id="tasks-title">最近任务</h2><p id="task-scope">最近添加的下载，完成后的内容可在“已完成”中查找。</p></div>
+      <div class="task-tools">
+        <button id="show-all" class="text-button" type="button">下载任务</button>
+        <button id="show-completed" class="text-button" type="button">查看已完成</button>
+        <button id="new-download" class="secondary" type="button" data-add-download hidden><svg><use href="#i-download"/></svg>新建下载</button>
+        <button id="manage-completed" class="secondary" type="button" aria-pressed="false" hidden>批量管理</button>
+        <button id="refresh-button" class="icon-button" title="刷新列表" aria-label="刷新列表"><svg><use href="#i-refresh"/></svg></button>
+      </div>
+    </div>
+    <div id="task-filters" class="task-filters" hidden>
+      <div id="task-tabs" class="tabs" aria-label="筛选未完成任务" hidden><button class="active" data-filter="all" aria-pressed="true">全部未完成 <span id="unfinished-count">0</span></button><button data-filter="active" aria-pressed="false">进行中 <span id="active-count">0</span></button><button data-filter="paused" aria-pressed="false">已暂停 <span id="paused-count">0</span></button><button data-filter="failed" aria-pressed="false">需处理 <span id="failed-count">0</span></button></div>
+      <div id="media-tabs" class="tabs" aria-label="筛选已完成内容类型" hidden><button class="active" data-media-filter="all" aria-pressed="true">全部类型</button><button data-media-filter="video" aria-pressed="false">视频</button><button data-media-filter="audio" aria-pressed="false">音频</button><button data-media-filter="image" aria-pressed="false">图文</button><button data-media-filter="other" aria-pressed="false" hidden>其他</button></div>
+      <label class="search-box"><svg><use href="#i-search"/></svg><input id="task-search" type="search" placeholder="搜索标题或作者" autocomplete="off" aria-label="搜索当前页面的标题或作者"></label>
+      <div id="completed-controls" class="completed-controls" hidden>
+        <select id="completed-platform" aria-label="筛选已完成内容的平台"><option value="all">全部平台</option><option value="douyin">抖音</option><option value="selected-douyin">抖音精选</option><option value="kuaishou">快手</option><option value="wechat">视频号</option><option value="xiaohongshu">小红书</option><option value="bilibili">B站</option><option value="youtube">YouTube</option><option value="other">其他平台</option></select>
+        <select id="completed-sort" aria-label="已完成内容排序"><option value="newest">最近完成</option><option value="oldest">最早完成</option><option value="title">按标题排序</option></select>
+      </div>
+    </div>
+    <div id="completed-batch" class="completed-batch" hidden>
+      <label class="batch-select"><input id="select-visible" type="checkbox">全选当前结果</label><span id="completed-selection-count" role="status">已选 0 条</span><span class="batch-note">仅移除记录，不删除本地文件</span><button id="remove-selected" class="secondary" type="button" disabled>移除所选记录</button><button id="exit-management" class="text-button" type="button">退出管理</button>
+    </div>
+    <div id="list-error" class="list-error" role="alert" hidden></div>
+    <div id="task-list" aria-live="polite" aria-relevant="additions"></div>
+    <div id="empty-state" class="empty-state"><div class="empty-icon"><svg><use href="#i-download"/></svg></div><h3>从一条喜欢的链接开始</h3><p>粘贴上方分享链接，下载任务会出现在这里。</p><button id="empty-action" class="text-button">添加第一个下载</button></div>
+    <footer class="task-footer"><span id="task-summary">正在读取任务…</span><span id="task-footer-note">文件保存在本机</span></footer>
+  </section>
+</main>
+<dialog id="settings-dialog" aria-labelledby="settings-title"><form id="settings-form">
+  <div class="dialog-heading"><div><h2 id="settings-title">下载设置</h2><p>保存后应用于新建任务。</p></div><button class="icon-button" type="button" data-close-dialog aria-label="关闭设置"><svg><use href="#i-close"/></svg></button></div>
+  <p id="environment-status" class="field-help" role="status">正在检查运行环境…</p>
+  <div class="settings-section">
+    <label class="field-label" for="directory">保存目录</label>
+    <div class="directory-field"><input id="directory" required autocomplete="off" spellcheck="false"><button id="choose-directory" class="secondary" type="button" hidden>选择文件夹</button></div>
+    <p class="field-help">按平台、作者归档；图文作品另设作品文件夹。</p>
+  </div>
+  <div class="settings-section">
+    <label class="checkbox-row"><span><strong>使用 Chrome 登录态</strong><small>需要登录的内容可开启。请先完全退出 Chrome 后重试。</small></span><input id="use-cookies" type="checkbox" role="switch"></label>
+    <label class="field-label" for="profile">Chrome 个人资料文件夹（可选）</label>
+    <input id="profile" placeholder="留空自动选择，例如 Default、Profile 1" spellcheck="false" pattern="Default|Profile [1-9][0-9]*" autocomplete="off">
+  </div>
+  <details class="settings-section wechat-settings"><summary>视频号登录态 <span id="wechat-cookie-state">读取中</span></summary>
+    <p class="field-help">视频号链接通道需要你自己的腾讯元宝 Cookie。凭据只保存在本机；部分需专用解密的作品暂不支持。</p>
+    <label class="field-label" for="wechat-cookie">腾讯元宝 Cookie</label>
+    <input type="password" id="wechat-cookie" autocomplete="off" placeholder="留空不修改已保存的登录态">
+    <div class="cookie-actions"><button id="wechat-login" class="secondary" type="button">扫码登录元宝</button><button id="save-cookie" class="secondary" type="button">保存登录态</button><button id="clear-cookie" class="text-button" type="button">清除登录态</button></div>
+  </details>
+  <div class="settings-section cache-section">
+    <div class="section-line"><div><strong>下载缓存</strong><p class="field-help">失败或暂停的任务会保留可续传的临时文件。</p></div><div class="cache-actions"><span id="cache-size">读取中…</span><button id="clear-cache" class="secondary" type="button">清理缓存</button></div></div>
+    <p id="cache-state" class="field-help"></p>
+  </div>
+  <p id="settings-message" class="form-message" role="status"></p>
+  <div class="dialog-footer"><button class="secondary" type="button" data-close-dialog>取消</button><button id="save-settings" class="primary" type="submit">保存设置</button></div>
+</form></dialog>
+<dialog id="help-dialog" aria-labelledby="help-title"><div class="dialog-heading"><h2 id="help-title">开始使用拾影</h2><button class="icon-button" data-close-dialog aria-label="关闭帮助"><svg><use href="#i-close"/></svg></button></div><ol class="help-steps"><li><strong>复制分享链接</strong><p>支持抖音、抖音精选、快手、视频号、小红书、B站和 YouTube。可粘贴完整分享文案。</p></li><li><strong>解析并下载</strong><p>优先选择当前会话可获取的清晰度。任务列表实时显示进度，按平台、作者归档，图文作品单独收纳。</p></li><li><strong>遇到登录提示</strong><p>在设置中开启 Chrome 登录态；登录后完全退出 Chrome，再新建任务。视频号需单独配置元宝登录态，部分加密作品仍可能下载失败。</p></li></ol><p class="help-note">当前版本专注下载，暂不包含字幕与转写。仅下载你有权保存的内容。</p><div class="dialog-footer"><span>拾影 v__APP_VERSION__ · GPL-3.0</span><button class="primary" data-close-dialog>知道了</button></div></dialog>
+<dialog id="details-dialog" aria-labelledby="details-title"><div class="dialog-heading"><h2 id="details-title">任务详情</h2><button class="icon-button" type="button" data-close-dialog aria-label="关闭详情"><svg><use href="#i-close"/></svg></button></div><div id="details-content"></div><div id="details-actions" class="dialog-footer"><button class="secondary" type="button" data-close-dialog>关闭</button></div></dialog>
+<dialog id="preview-dialog" aria-labelledby="preview-title"><div class="dialog-heading"><h2 id="preview-title">作品解析预览</h2><button class="icon-button" type="button" data-close-dialog aria-label="关闭"><svg><use href="#i-close"/></svg></button></div><div class="preview-header"><p id="preview-meta" class="field-help"></p><div class="preview-actions"><button type="button" class="text-button" id="preview-select-all">全选</button><span class="divider"></span><button type="button" class="text-button" id="preview-unselect-all">全不选</button></div></div><div id="preview-items" class="preview-list"></div><p id="preview-message" class="form-message" role="status"></p><div class="dialog-footer"><button class="secondary" type="button" data-close-dialog>取消</button><button class="primary" id="confirm-download-selected" type="button">下载选中项 (<span id="selected-count">0</span>)</button></div></dialog>
+<dialog id="duplicate-dialog" aria-labelledby="duplicate-title"><div class="dialog-heading"><div><h2 id="duplicate-title">已存在相同任务</h2><p>相同的链接已经有下载记录，避免重复下载可以节省时间。</p></div><button class="icon-button" type="button" data-close-dialog aria-label="关闭"><svg><use href="#i-close"/></svg></button></div><div id="duplicate-list" class="duplicate-list"></div><p id="duplicate-message" class="form-message" role="status"></p><p class="duplicate-hint">说明：若选择「仍然下载」，本地已有的同名原文件会被保留；若新下载内容或规格不同，将自动另存为带有 (2) 等后缀的新文件（若本地已有完整同规格文件，系统将智能复用以节省流量）。</p><div class="dialog-footer"><button id="duplicate-skip" class="secondary" type="button">跳过这些链接</button><button id="duplicate-force" class="primary" type="button">仍然下载</button></div></dialog>
+<dialog id="remove-dialog" aria-labelledby="remove-title"><div class="dialog-heading"><h2 id="remove-title">移除任务记录</h2><button class="icon-button" type="button" data-close-dialog aria-label="关闭"><svg><use href="#i-close"/></svg></button></div><p id="remove-description"></p><p id="remove-message" class="form-message" role="status"></p><div class="dialog-footer"><button class="secondary" type="button" data-close-dialog>取消</button><button class="primary" id="confirm-remove" type="button">移除记录</button></div></dialog>
+<div id="toast-region" class="toast-region" role="status" aria-live="polite"></div>
+</body></html>

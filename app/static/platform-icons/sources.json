@@ -1,0 +1,138 @@
+[
+  {
+    "key": "douyin",
+    "name": "抖音",
+    "publisher": "Beijing Douyin Technology Co., Ltd.",
+    "source_page": "https://apps.apple.com/cn/app/%E6%8A%96%E9%9F%B3/id1142110895?uo=4",
+    "metadata_url": "https://itunes.apple.com/lookup?id=1142110895&country=cn",
+    "metadata_artwork_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/a4/4d/bc/a44dbc69-cbdf-b68c-ea88-d449683563e9/AppIcon-0-0-1x_U007emarketing-0-0-0-7-0-0-85-220.png/512x512bb.jpg",
+    "asset_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/a4/4d/bc/a44dbc69-cbdf-b68c-ea88-d449683563e9/AppIcon-0-0-1x_U007emarketing-0-0-0-7-0-0-85-220.png/512x512bb.png",
+    "resolved_asset_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/a4/4d/bc/a44dbc69-cbdf-b68c-ea88-d449683563e9/AppIcon-0-0-1x_U007emarketing-0-0-0-7-0-0-85-220.png/512x512bb.png",
+    "original_file": "douyin\\original.png",
+    "format": "PNG",
+    "size": [
+      512,
+      512
+    ],
+    "sha256": "bff8bbb9af0a7c4505a65a01f79c464d61328866df00a2eaed5fede2cf782273",
+    "downloaded_on": "2026-11-10",
+    "file": "douyin.png",
+    "transformations": "none; original response bytes"
+  },
+  {
+    "key": "selected-douyin",
+    "name": "抖音精选-精挑细选独家好视频",
+    "publisher": "Beijing Douyin Technology Co., Ltd.",
+    "source_page": "https://apps.apple.com/cn/app/%E6%8A%96%E9%9F%B3%E7%B2%BE%E9%80%89-%E7%B2%BE%E6%8C%91%E7%BB%86%E9%80%89%E7%8B%AC%E5%AE%B6%E5%A5%BD%E8%A7%86%E9%A2%91/id6444170965?uo=4",
+    "metadata_url": "https://itunes.apple.com/lookup?id=6444170965&country=cn",
+    "metadata_artwork_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/95/f8/41/95f841fd-bedb-63e7-b7c8-2c9912bb80bb/AppIcon-0-0-1x_U007epad-0-1-0-85-220.png/512x512bb.jpg",
+    "asset_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/95/f8/41/95f841fd-bedb-63e7-b7c8-2c9912bb80bb/AppIcon-0-0-1x_U007epad-0-1-0-85-220.png/512x512bb.png",
+    "resolved_asset_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/95/f8/41/95f841fd-bedb-63e7-b7c8-2c9912bb80bb/AppIcon-0-0-1x_U007epad-0-1-0-85-220.png/512x512bb.png",
+    "original_file": "selected-douyin\\original.png",
+    "format": "PNG",
+    "size": [
+      512,
+      512
+    ],
+    "sha256": "4f859044785b25f423fd0bd4ece00ad8012e45c839938ff0bf1c264bac51f429",
+    "downloaded_on": "2026-11-10",
+    "file": "selected-douyin.png",
+    "transformations": "none; original response bytes"
+  },
+  {
+    "key": "kuaishou",
+    "name": "快手",
+    "publisher": "Beijing Kwai Technology Co., Ltd.",
+    "source_page": "https://apps.apple.com/cn/app/%E5%BF%AB%E6%89%8B/id440948110?uo=4",
+    "metadata_url": "https://itunes.apple.com/lookup?id=440948110&country=cn",
+    "metadata_artwork_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/35/4c/61/354c6143-8d74-086b-f497-cff8882a0cd4/AppIcon-0-0-1x_U007emarketing-0-8-0-sRGB-85-220.png/512x512bb.jpg",
+    "asset_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/35/4c/61/354c6143-8d74-086b-f497-cff8882a0cd4/AppIcon-0-0-1x_U007emarketing-0-8-0-sRGB-85-220.png/512x512bb.png",
+    "resolved_asset_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/35/4c/61/354c6143-8d74-086b-f497-cff8882a0cd4/AppIcon-0-0-1x_U007emarketing-0-8-0-sRGB-85-220.png/512x512bb.png",
+    "original_file": "kuaishou\\original.png",
+    "format": "PNG",
+    "size": [
+      512,
+      512
+    ],
+    "sha256": "00e0e688266eb9fe505f90715fa2b63e57e51b1e511b1a92f3650f12d695806d",
+    "downloaded_on": "2026-11-10",
+    "file": "kuaishou.png",
+    "transformations": "none; original response bytes"
+  },
+  {
+    "key": "xiaohongshu",
+    "name": "小红书 - 你的生活兴趣社区",
+    "publisher": "Xingin Information Technology (Shanghai) Co., Ltd",
+    "source_page": "https://apps.apple.com/cn/app/%E5%B0%8F%E7%BA%A2%E4%B9%A6-%E4%BD%A0%E7%9A%84%E7%94%9F%E6%B4%BB%E5%85%B4%E8%B6%A3%E7%A4%BE%E5%8C%BA/id741292507?uo=4",
+    "metadata_url": "https://itunes.apple.com/lookup?id=741292507&country=cn",
+    "metadata_artwork_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/6b/73/d5/6b73d59a-7966-530d-dbaa-8d2f7e9c6923/AppIcon-0-0-1x_U007epad-0-11-0-85-220.png/512x512bb.jpg",
+    "asset_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/6b/73/d5/6b73d59a-7966-530d-dbaa-8d2f7e9c6923/AppIcon-0-0-1x_U007epad-0-11-0-85-220.png/512x512bb.png",
+    "resolved_asset_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/6b/73/d5/6b73d59a-7966-530d-dbaa-8d2f7e9c6923/AppIcon-0-0-1x_U007epad-0-11-0-85-220.png/512x512bb.png",
+    "original_file": "xiaohongshu\\original.png",
+    "format": "PNG",
+    "size": [
+      512,
+      512
+    ],
+    "sha256": "ac64cf9f868b60324bf578f7f1f79a8ea50a7542195183352d32d9f52bcc3639",
+    "downloaded_on": "2026-11-10",
+    "file": "xiaohongshu.png",
+    "transformations": "none; original response bytes"
+  },
+  {
+    "key": "bilibili",
+    "name": "哔哩哔哩",
+    "publisher": "bilibili",
+    "source_page": "https://app.bilibili.com/",
+    "source_element": "img.icon",
+    "asset_url": "https://i0.hdslb.com/bfs/activity-plat/static/20220518/49ddaeaba3a23f61a6d2695de40d45f0/2nqyzFm9He.jpeg",
+    "original_file": "bilibili-download/original.jpg",
+    "format": "JPEG",
+    "size": [
+      750,
+      750
+    ],
+    "sha256": "fe4093e91334cfa1ac66881e01979b7bcdcf548640d6b31712f22f0ac9cb5fc8",
+    "downloaded_on": "2026-11-10",
+    "file": "bilibili.jpg",
+    "transformations": "none; original response bytes"
+  },
+  {
+    "key": "youtube",
+    "name": "YouTube",
+    "publisher": "Google LLC",
+    "source_page": "https://apps.apple.com/cn/app/youtube/id544007664?uo=4",
+    "metadata_url": "https://itunes.apple.com/lookup?id=544007664&country=cn",
+    "metadata_artwork_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/84/80/65/84806526-8b53-6e37-8e01-8369c879d30a/logo_youtube_2024_q4_color-0-0-1x_U007emarketing-0-0-0-7-0-0-0-85-220.png/512x512bb.jpg",
+    "asset_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/84/80/65/84806526-8b53-6e37-8e01-8369c879d30a/logo_youtube_2024_q4_color-0-0-1x_U007emarketing-0-0-0-7-0-0-0-85-220.png/512x512bb.png",
+    "resolved_asset_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/84/80/65/84806526-8b53-6e37-8e01-8369c879d30a/logo_youtube_2024_q4_color-0-0-1x_U007emarketing-0-0-0-7-0-0-0-85-220.png/512x512bb.png",
+    "original_file": "youtube\\original.png",
+    "format": "PNG",
+    "size": [
+      512,
+      512
+    ],
+    "sha256": "3bc649ef5878eeb2906a2e8ecbb85d3bf350fa5b2d8650fd66679895a034d8e8",
+    "downloaded_on": "2026-11-10",
+    "file": "youtube.png",
+    "transformations": "none; original response bytes"
+  },
+  {
+    "key": "wechat",
+    "name": "微信视频号",
+    "publisher": "Tencent",
+    "file": "wechat.svg",
+    "source_page": "https://channels.weixin.qq.com/",
+    "asset_url": "https://res.wx.qq.com/t/wx_fed/finder/helper/finder-helper-web/res/static/js/chunk-common.ec025662.js",
+    "source_symbol": "icon-logo",
+    "source_viewbox": "0 0 32 32",
+    "source_bundle_sha256": "9d238f12f832c90596b7418f7a17a55d47af8651625a08a1d763731835567cc3",
+    "source_path_sha256": "7b079653468e1dc230cabd53b78b240f5cc4134092adcdf2cfb5f8747e25ea28",
+    "source_color_url": "https://res.wx.qq.com/t/wx_fed/finder/helper/finder-helper-web/res/favicon-v2.ico",
+    "fill": "#fa9d3b",
+    "format": "SVG",
+    "sha256": "8ab1738c0c1870c3b05ca5e4172979867c4afc2511bfcdad15d0038610233193",
+    "downloaded_on": "2026-11-10",
+    "transformations": "Official symbol extracted into a standalone SVG wrapper; path and viewBox unchanged. Fill is the dominant opaque color of the official favicon."
+  }
+]

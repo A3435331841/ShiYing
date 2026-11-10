@@ -1,0 +1,38 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+.idea/
+.pytest_cache/
+.venv/
+.vscode/
+__pycache__/
+*.py[cod]
+*.log
+cookies*.json
+cookies*.txt
+data/
+downloads/
+cache/
+*.part
+# Local signing keys, packaged release artifacts and audit snapshots must never
+# be committed: extension/*.pem can sign browser extensions and data/certs holds
+# a local mitmproxy CA private key.
+*.pem
+*.p12
+*.crx
+releases/
+backups/
+graphify-out/
+*.corrupt-*.json
+# 审计截图/历史产物与本地工具会话数据，不入库
+审计产物/
+artifacts/
+.claude/
+.zcode/
+# 打包产物（未来分发用）
+dist/
+build/
+# 系统杂项
+Thumbs.db
+desktop.ini

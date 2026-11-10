@@ -1,0 +1,18 @@
+{
+  "key": "kuaishou",
+  "name": "快手",
+  "publisher": "Beijing Kwai Technology Co., Ltd.",
+  "source_page": "https://apps.apple.com/cn/app/%E5%BF%AB%E6%89%8B/id440948110?uo=4",
+  "metadata_url": "https://itunes.apple.com/lookup?id=440948110&country=cn",
+  "metadata_artwork_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/35/4c/61/354c6143-8d74-086b-f497-cff8882a0cd4/AppIcon-0-0-1x_U007emarketing-0-8-0-sRGB-85-220.png/512x512bb.jpg",
+  "asset_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/35/4c/61/354c6143-8d74-086b-f497-cff8882a0cd4/AppIcon-0-0-1x_U007emarketing-0-8-0-sRGB-85-220.png/512x512bb.png",
+  "resolved_asset_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/35/4c/61/354c6143-8d74-086b-f497-cff8882a0cd4/AppIcon-0-0-1x_U007emarketing-0-8-0-sRGB-85-220.png/512x512bb.png",
+  "original_file": "kuaishou\\original.png",
+  "format": "PNG",
+  "size": [
+    512,
+    512
+  ],
+  "sha256": "00e0e688266eb9fe505f90715fa2b63e57e51b1e511b1a92f3650f12d695806d",
+  "downloaded_on": "2026-11-10"
+}

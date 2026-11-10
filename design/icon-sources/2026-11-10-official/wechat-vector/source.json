@@ -1,0 +1,18 @@
+{
+  "key": "wechat",
+  "name": "微信视频号",
+  "publisher": "Tencent",
+  "file": "wechat.svg",
+  "source_page": "https://channels.weixin.qq.com/",
+  "asset_url": "https://res.wx.qq.com/t/wx_fed/finder/helper/finder-helper-web/res/static/js/chunk-common.ec025662.js",
+  "source_symbol": "icon-logo",
+  "source_viewbox": "0 0 32 32",
+  "source_bundle_sha256": "9d238f12f832c90596b7418f7a17a55d47af8651625a08a1d763731835567cc3",
+  "source_path_sha256": "7b079653468e1dc230cabd53b78b240f5cc4134092adcdf2cfb5f8747e25ea28",
+  "source_color_url": "https://res.wx.qq.com/t/wx_fed/finder/helper/finder-helper-web/res/favicon-v2.ico",
+  "fill": "#fa9d3b",
+  "format": "SVG",
+  "sha256": "8ab1738c0c1870c3b05ca5e4172979867c4afc2511bfcdad15d0038610233193",
+  "downloaded_on": "2026-11-10",
+  "transformations": "Official symbol extracted into a standalone SVG wrapper; path and viewBox unchanged. Fill is the dominant opaque color of the official favicon."
+}

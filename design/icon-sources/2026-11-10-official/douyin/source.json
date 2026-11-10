@@ -1,0 +1,18 @@
+{
+  "key": "douyin",
+  "name": "抖音",
+  "publisher": "Beijing Douyin Technology Co., Ltd.",
+  "source_page": "https://apps.apple.com/cn/app/%E6%8A%96%E9%9F%B3/id1142110895?uo=4",
+  "metadata_url": "https://itunes.apple.com/lookup?id=1142110895&country=cn",
+  "metadata_artwork_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/a4/4d/bc/a44dbc69-cbdf-b68c-ea88-d449683563e9/AppIcon-0-0-1x_U007emarketing-0-0-0-7-0-0-85-220.png/512x512bb.jpg",
+  "asset_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/a4/4d/bc/a44dbc69-cbdf-b68c-ea88-d449683563e9/AppIcon-0-0-1x_U007emarketing-0-0-0-7-0-0-85-220.png/512x512bb.png",
+  "resolved_asset_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/a4/4d/bc/a44dbc69-cbdf-b68c-ea88-d449683563e9/AppIcon-0-0-1x_U007emarketing-0-0-0-7-0-0-85-220.png/512x512bb.png",
+  "original_file": "douyin\\original.png",
+  "format": "PNG",
+  "size": [
+    512,
+    512
+  ],
+  "sha256": "bff8bbb9af0a7c4505a65a01f79c464d61328866df00a2eaed5fede2cf782273",
+  "downloaded_on": "2026-11-10"
+}

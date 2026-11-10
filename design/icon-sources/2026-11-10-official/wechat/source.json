@@ -1,0 +1,17 @@
+{
+  "key": "wechat",
+  "name": "微信视频号",
+  "publisher": "Tencent",
+  "source_page": "https://channels.weixin.qq.com/",
+  "asset_url": "https://res.wx.qq.com/t/wx_fed/finder/helper/finder-helper-web/res/favicon-v2.ico",
+  "resolved_asset_url": "https://res.wx.qq.com/t/wx_fed/finder/helper/finder-helper-web/res/favicon-v2.ico",
+  "original_file": "wechat/original.ico",
+  "format": "PNG",
+  "size": [
+    32,
+    32
+  ],
+  "frames": [],
+  "sha256": "f27ed8a51c12055714e2867bc346e6c8fe5e31719ef7d8675e9f23422ca0b92d",
+  "downloaded_on": "2026-11-10"
+}

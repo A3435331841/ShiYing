@@ -1,0 +1,18 @@
+{
+  "key": "selected-douyin",
+  "name": "抖音精选-精挑细选独家好视频",
+  "publisher": "Beijing Douyin Technology Co., Ltd.",
+  "source_page": "https://apps.apple.com/cn/app/%E6%8A%96%E9%9F%B3%E7%B2%BE%E9%80%89-%E7%B2%BE%E6%8C%91%E7%BB%86%E9%80%89%E7%8B%AC%E5%AE%B6%E5%A5%BD%E8%A7%86%E9%A2%91/id6444170965?uo=4",
+  "metadata_url": "https://itunes.apple.com/lookup?id=6444170965&country=cn",
+  "metadata_artwork_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/95/f8/41/95f841fd-bedb-63e7-b7c8-2c9912bb80bb/AppIcon-0-0-1x_U007epad-0-1-0-85-220.png/512x512bb.jpg",
+  "asset_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/95/f8/41/95f841fd-bedb-63e7-b7c8-2c9912bb80bb/AppIcon-0-0-1x_U007epad-0-1-0-85-220.png/512x512bb.png",
+  "resolved_asset_url": "https://is1-ssl.mzstatic.com/image/thumb/Purple211/v4/95/f8/41/95f841fd-bedb-63e7-b7c8-2c9912bb80bb/AppIcon-0-0-1x_U007epad-0-1-0-85-220.png/512x512bb.png",
+  "original_file": "selected-douyin\\original.png",
+  "format": "PNG",
+  "size": [
+    512,
+    512
+  ],
+  "sha256": "4f859044785b25f423fd0bd4ece00ad8012e45c839938ff0bf1c264bac51f429",
+  "downloaded_on": "2026-11-10"
+}

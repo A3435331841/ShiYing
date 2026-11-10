@@ -148,6 +148,17 @@ class IssueMixin:
                 if item.issue_code in NON_RETRYABLE_SITE_ISSUES and item.retryable:
                     item.retryable = False
                     changed = True
+                if item.issue_code is SiteIssueCode.UNKNOWN:
+                    upgraded = classify_site_issue(
+                        message,
+                        authentication_required=item.status == ItemStatus.NEEDS_AUTH,
+                    )
+                    if upgraded is not SiteIssueCode.UNKNOWN:
+                        item.issue_code = upgraded
+                        changed = True
+                        if upgraded in NON_RETRYABLE_SITE_ISSUES and item.retryable:
+                            item.retryable = False
+                            changed = True
                 continue
             expected = classify_site_issue(
                 message,
@@ -185,6 +196,17 @@ class IssueMixin:
                 changed = True
 
         if job.issue_code is not None and job.issue_message is not None:
+            if job.issue_code is SiteIssueCode.UNKNOWN:
+                upgraded = classify_site_issue(
+                    job.issue_message,
+                    authentication_required=(
+                        job.status == JobStatus.NEEDS_AUTH
+                        and job.issue_message == job.auth_message
+                    ),
+                )
+                if upgraded is not SiteIssueCode.UNKNOWN:
+                    job.issue_code = upgraded
+                    changed = True
             if (
                 job.issue_code in NON_RETRYABLE_SITE_ISSUES
                 and not any(item.retryable for item in job.items if item.error)

@@ -318,7 +318,10 @@ def source_identity(value: str) -> tuple[str, str]:
             return {"short-video": "item", "profile": "profile", "f": "short_link"}[
                 match[1]
             ], match[2]
-    raise DiscoveryError("Unsupported Kuaishou video, profile, or share URL")
+    raise DiscoveryError(
+        "Unsupported Kuaishou video, profile, or share URL",
+        issue_code=SiteIssueCode.SITE_RESPONSE_CHANGED,
+    )
 
 
 def _positive(value: Any) -> int | None:

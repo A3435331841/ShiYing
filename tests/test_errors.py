@@ -104,6 +104,27 @@ from app.errors import (
             "请求超时",
             SiteIssueCode.NETWORK_ERROR,
         ),
+        (
+            "小红书暂时无法打开这篇笔记。链接可能已过期、作品不可见或访问受限；请从小红书重新复制完整分享链接后重试。",
+            SiteIssueCode.CONTENT_UNAVAILABLE,
+        ),
+        (
+            "Xiaohongshu note redirect was blocked before requesting an "
+            "untrusted or mismatched target",
+            SiteIssueCode.SECURITY_BLOCKED,
+        ),
+        (
+            "Kuaishou media redirect was blocked before requesting an untrusted target",
+            SiteIssueCode.SECURITY_BLOCKED,
+        ),
+        (
+            "Unsupported Kuaishou video, profile, or share URL",
+            SiteIssueCode.SITE_RESPONSE_CHANGED,
+        ),
+        (
+            "无法解析小红书分享链接，请检查网络并重新复制链接。",
+            SiteIssueCode.NETWORK_ERROR,
+        ),
     ],
 )
 def test_classify_site_issue_corpus(

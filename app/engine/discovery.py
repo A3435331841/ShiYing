@@ -426,7 +426,10 @@ class DiscoveryMixin:
             except DiscoveryError:
                 raise
             except Exception as exc:
-                raise DiscoveryError("无法解析小红书分享链接，请检查网络并重新复制链接。") from exc
+                raise DiscoveryError(
+                    "无法解析小红书分享链接，请检查网络并重新复制链接。",
+                    issue_code=SiteIssueCode.NETWORK_ERROR,
+                ) from exc
 
         def operation(use_cookies: bool) -> str:
             try:

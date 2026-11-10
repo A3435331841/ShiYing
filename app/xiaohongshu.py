@@ -982,13 +982,15 @@ def _read_page(ydl: YoutubeDL, url: str) -> str:
                     and target.username is None and target.password is None
                     and target.port in (None, 443) and target.path.startswith("/404/")):
                     raise DiscoveryError(
-                        "小红书暂时无法打开这篇笔记。链接可能已过期、作品不可见或访问受限；请从小红书重新复制完整分享链接后重试。"
+                        "小红书暂时无法打开这篇笔记。链接可能已过期、作品不可见或访问受限；请从小红书重新复制完整分享链接后重试。",
+                        issue_code=SiteIssueCode.CONTENT_UNAVAILABLE,
                     ) from exc
             except ValueError:
                 pass
         raise DiscoveryError(
             "Xiaohongshu note redirect was blocked before requesting an "
-            "untrusted or mismatched target"
+            "untrusted or mismatched target",
+            issue_code=SiteIssueCode.SECURITY_BLOCKED,
         ) from exc
     try:
         final_url = str(getattr(response, "url", None) or url)

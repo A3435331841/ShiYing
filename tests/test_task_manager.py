@@ -8144,6 +8144,106 @@ def test_issue_backfill_does_not_replace_explicit_codes(tmp_path) -> None:
     assert job.items[0].issue_code == SiteIssueCode.MEDIA_LINK_EXPIRED
 
 
+def test_issue_backfill_upgrades_unknown_codes_from_message(tmp_path) -> None:
+    message = (
+        "Xiaohongshu note redirect was blocked before requesting an "
+        "untrusted or mismatched target"
+    )
+    item = DownloadItem(
+        id="failed-item",
+        source_url="https://www.xiaohongshu.com/explore/example",
+        status=ItemStatus.FAILED,
+        error=message,
+        issue_code=SiteIssueCode.UNKNOWN,
+    )
+    job = DownloadJob(
+        id="unknown-issue",
+        source_url="https://www.xiaohongshu.com/explore/example",
+        platform=Platform.XIAOHONGSHU,
+        source_kind=SourceKind.ITEM,
+        output_root=str(tmp_path / "downloads"),
+        status=JobStatus.FAILED,
+        error="1 item(s) failed",
+        issue_code=SiteIssueCode.UNKNOWN,
+        issue_message=message,
+        items=[item],
+    )
+
+    changed = DownloadManager._backfill_job_issue_locked(job)
+
+    assert changed is True
+    assert job.issue_code == SiteIssueCode.SECURITY_BLOCKED
+    assert job.issue_message == message
+    assert job.items[0].issue_code == SiteIssueCode.SECURITY_BLOCKED
+
+
+def test_issue_backfill_upgrade_disables_retry_for_non_retryable_code(
+    tmp_path,
+) -> None:
+    message = (
+        "小红书暂时无法打开这篇笔记。链接可能已过期、作品不可见或访问受限；"
+        "请从小红书重新复制完整分享链接后重试。"
+    )
+    item = DownloadItem(
+        id="failed-item",
+        source_url="https://www.xiaohongshu.com/explore/example",
+        status=ItemStatus.FAILED,
+        error=message,
+        retryable=True,
+        issue_code=SiteIssueCode.UNKNOWN,
+    )
+    job = DownloadJob(
+        id="unknown-unavailable",
+        source_url="https://www.xiaohongshu.com/explore/example",
+        platform=Platform.XIAOHONGSHU,
+        source_kind=SourceKind.ITEM,
+        output_root=str(tmp_path / "downloads"),
+        status=JobStatus.FAILED,
+        error="1 item(s) failed",
+        retryable=True,
+        issue_code=SiteIssueCode.UNKNOWN,
+        issue_message=message,
+        items=[item],
+    )
+
+    changed = DownloadManager._backfill_job_issue_locked(job)
+
+    assert changed is True
+    assert job.issue_code == SiteIssueCode.CONTENT_UNAVAILABLE
+    assert job.items[0].issue_code == SiteIssueCode.CONTENT_UNAVAILABLE
+    assert job.retryable is False
+    assert job.items[0].retryable is False
+
+
+def test_issue_backfill_keeps_unknown_when_message_unclassifiable(tmp_path) -> None:
+    message = "completely opaque runtime failure with no markers"
+    item = DownloadItem(
+        id="failed-item",
+        source_url="https://www.youtube.com/watch?v=LXb3EKWsInQ",
+        status=ItemStatus.FAILED,
+        error=message,
+        issue_code=SiteIssueCode.UNKNOWN,
+    )
+    job = DownloadJob(
+        id="still-unknown",
+        source_url="https://www.youtube.com/watch?v=LXb3EKWsInQ",
+        platform=Platform.YOUTUBE,
+        source_kind=SourceKind.ITEM,
+        output_root=str(tmp_path / "downloads"),
+        status=JobStatus.FAILED,
+        error="1 item(s) failed",
+        issue_code=SiteIssueCode.UNKNOWN,
+        issue_message=message,
+        items=[item],
+    )
+
+    changed = DownloadManager._backfill_job_issue_locked(job)
+
+    assert changed is False
+    assert job.issue_code == SiteIssueCode.UNKNOWN
+    assert job.items[0].issue_code == SiteIssueCode.UNKNOWN
+
+
 def test_restore_finalizes_job_when_all_items_were_saved_before_crash(
     tmp_path,
 ) -> None:

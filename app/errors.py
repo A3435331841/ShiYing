@@ -256,6 +256,8 @@ def classify_site_issue(
             "未允许播放该作品",
             "检查链接和账号观看权限",
             "无权访问",
+            "暂时无法打开这篇笔记",
+            "作品不可见",
         )
     ):
         return SiteIssueCode.CONTENT_UNAVAILABLE
@@ -267,6 +269,8 @@ def classify_site_issue(
             "outside the trusted",
             "unrecognized douyin cdn",
             "redirect could not be trusted",
+            "redirect was blocked",
+            "blocked before requesting an untrusted",
             "nonstandard-port",
             "blocked media route",
             "security check",
@@ -308,6 +312,7 @@ def classify_site_issue(
             "did not include a verified direct highest-quality rendition",
             "media size changed between the range probe and local probe",
             "media content changed between the range probe and local probe",
+            "unsupported kuaishou",
         )
     ):
         return SiteIssueCode.SITE_RESPONSE_CHANGED
@@ -365,6 +370,7 @@ def classify_site_issue(
             "请求超时",
             "传输中断",
             "超时断开",
+            "请检查网络",
         )
     ):
         return SiteIssueCode.NETWORK_ERROR

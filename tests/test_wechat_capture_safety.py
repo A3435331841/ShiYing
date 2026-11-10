@@ -574,3 +574,19 @@ def test_legacy_discovering_record_is_migrated_and_never_zombie():
 
     assert jobs[0]['status'] == 'interrupted'
     assert jobs[0]['message'] == '上次运行已中断，请重新提交链接。'
+
+
+def test_corrupt_plaintext_secret_is_quarantined(tmp_path):
+    """无前缀的二进制坏文件必须与损坏密文同样隔离，
+    否则 status() 持续谎报登录态已配置而每次下载都失败。"""
+    from app import wechat_secret
+
+    secret = tmp_path / "yuanbao-cookie.txt"
+    secret.write_bytes(b"\xff\xfe\x00garbage")
+
+    import pytest
+    with pytest.raises(OSError, match="隔离"):
+        wechat_secret.load_secret(secret)
+
+    assert not secret.exists()
+    assert secret.with_name(secret.name + ".corrupt").exists()

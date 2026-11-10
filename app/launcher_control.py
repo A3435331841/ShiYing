@@ -378,9 +378,12 @@ class _LauncherControlHandler(BaseHTTPRequestHandler):
             return
         expected_token = self.server.record.stop_token
         supplied_token = self.headers.get(STOP_TOKEN_HEADER, "")
-        if not supplied_token or not secrets.compare_digest(
-            supplied_token,
-            expected_token,
+        # compare_digest 对含非 ASCII 字符的字符串抛 TypeError（头按 latin-1
+        # 解码可含 U+0080-U+00FF）；统一按 403 拒绝而不是让堆栈打满日志。
+        if (
+            not supplied_token
+            or not supplied_token.isascii()
+            or not secrets.compare_digest(supplied_token, expected_token)
         ):
             self._send_json(403, {"detail": "Invalid launcher stop token"})
             return

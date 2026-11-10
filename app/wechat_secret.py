@@ -61,7 +61,17 @@ def load_secret(path: Path) -> str:
                 pass
             raise OSError("保存的元宝登录态已损坏，已隔离该文件，请重新保存登录态。") from exc
     # Upgrade credentials saved by older versions only after encryption succeeds.
-    value = raw.decode("utf-8").strip()
+    try:
+        value = raw.decode("utf-8").strip()
+    except UnicodeDecodeError as exc:
+        # 无前缀的二进制垃圾与损坏密文同样隔离，否则 status() 会持续把
+        # 登录态报成已配置，而每次下载都失败。
+        quarantine = path.with_name(path.name + ".corrupt")
+        try:
+            path.replace(quarantine)
+        except OSError:
+            pass
+        raise OSError("保存的元宝登录态已损坏，已隔离该文件，请重新保存登录态。") from exc
     if value:
         save_secret(path, value)
     return value

@@ -362,3 +362,23 @@ def test_control_can_restart_after_idempotent_close(tmp_path: Path) -> None:
         assert payload["instance_id"] == INSTANCE_ID
     finally:
         control.close()
+
+
+def test_control_stop_rejects_non_ascii_token_without_error(tmp_path: Path) -> None:
+    """非 ASCII stop token 不得让 compare_digest 抛 TypeError（日志堆栈+断连），
+    应与错误 token 一样得到 403。"""
+    control, stop_requested = start_control(tmp_path)
+    record = control.record
+    assert record is not None
+    try:
+        status, payload = request_json(
+            record.control_port,
+            "/stop",
+            method="POST",
+            headers={STOP_TOKEN_HEADER: "café" + "b" * 32},
+        )
+        assert status == 403
+        assert payload == {"detail": "Invalid launcher stop token"}
+        assert not stop_requested.is_set()
+    finally:
+        control.close()

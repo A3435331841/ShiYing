@@ -4,6 +4,7 @@ import json
 import os
 import re
 import threading
+import time
 import uuid
 from pathlib import Path
 
@@ -32,8 +33,36 @@ class JobNotFoundError(KeyError):
     pass
 
 
+def _replace_with_retry(source: Path, target: Path) -> None:
+    delays = JsonJobStore._RETRY_DELAYS
+    for index, delay in enumerate(delays):
+        try:
+            os.replace(source, target)
+            return
+        except PermissionError:
+            if index == len(delays) - 1:
+                raise
+            time.sleep(delay)
+
+
+def _read_text_with_retry(path: Path) -> str:
+    delays = JsonJobStore._RETRY_DELAYS
+    for index, delay in enumerate(delays):
+        try:
+            return path.read_text(encoding="utf-8")
+        except PermissionError:
+            if index == len(delays) - 1:
+                raise
+            time.sleep(delay)
+    raise AssertionError("unreachable retry state")
+
+
 class JsonJobStore:
     """Persist each job separately so one interrupted write cannot corrupt all jobs."""
+
+    # Windows 上杀毒/索引器可能短暂持有目标 json 句柄，replace/read 抛瞬时
+    # PermissionError；有限重试覆盖绝大多数窗口，失败仍按原语义抛出。
+    _RETRY_DELAYS = (0.05, 0.1, 0.2)
 
     _SAFE_ID = re.compile(r"^[A-Za-z0-9_-]+$")
 
@@ -57,7 +86,7 @@ class JsonJobStore:
                     json.dump(payload, handle, ensure_ascii=False, indent=2)
                     handle.flush()
                     os.fsync(handle.fileno())
-                os.replace(temporary, target)
+                _replace_with_retry(temporary, target)
                 _fsync_directory(self.state_dir)
             finally:
                 temporary.unlink(missing_ok=True)
@@ -67,7 +96,7 @@ class JsonJobStore:
         with self._lock:
             if not path.is_file():
                 raise JobNotFoundError(job_id)
-            return DownloadJob.model_validate_json(path.read_text(encoding="utf-8"))
+            return DownloadJob.model_validate_json(_read_text_with_retry(path))
 
     def delete(self, job_id: str) -> None:
         path = self._job_path(job_id)

@@ -74,6 +74,14 @@ def open_folder_foreground(path: str) -> bool:
     target = Path(path).resolve()
     if not Path(path).is_absolute() or not target.is_dir():
         raise ValueError("下载目录不存在或不是有效的绝对路径。")
+    # 前台激活依赖 Explorer/pythonnet（Windows 专属）；macOS/Linux 用系统
+    # 打开命令直接弹出新窗口，返回 False 表示无前台激活语义。
+    if sys.platform == "darwin":
+        subprocess.Popen(["open", str(target)])
+        return False
+    if os.name != "nt":
+        subprocess.Popen(["xdg-open", str(target)])
+        return False
     activated = [False]
     opened = [False]
     found = [False]

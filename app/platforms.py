@@ -106,7 +106,7 @@ def identify_url(value: str) -> UrlInfo:
             media_id = (video_match or note_match).group(1)
             url = f"https://www.douyin.com/video/{media_id}"
             kind = SourceKind.ITEM
-        elif user_match and item_query_present:
+        elif (user_match or path in ("", "/")) and item_query_present:
             for values in (modal_values, vid_values):
                 if values and (
                     len(set(values)) != 1
@@ -143,7 +143,14 @@ def identify_url(value: str) -> UrlInfo:
         return UrlInfo(url=url, platform=Platform.BILIBILI, kind=kind)
 
     if host == "youtu.be" or _is_domain(host, "youtube.com"):
-        if "list" in query or "/playlist" in path:
+        # watch?v=X&list=Y 与 youtu.be/ID?list=Y 是"播放列表里的某个视频"
+        # 最常见的复制形态，用户意图是单个视频；只有 /playlist 路径或
+        # 不带明确单视频标识的 list 链接才按整个播放列表处理。
+        v_values = query.get("v") or []
+        has_single_video = (
+            len(v_values) == 1 and re.fullmatch(r"[\w-]{5,}", v_values[0])
+        ) or (host == "youtu.be" and re.fullmatch(r"/[\w-]{5,}", path))
+        if "/playlist" in path or ("list" in query and not has_single_video):
             kind = SourceKind.PLAYLIST
         elif re.match(
             r"/(?:@[^/]+|channel/[^/]+|c/[^/]+|user/[^/]+)(?:/(?:videos|shorts|streams))?$",

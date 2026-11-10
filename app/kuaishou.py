@@ -1189,6 +1189,23 @@ def discover(
                     "Kuaishou page could not be opened. Check the configured proxy and network.",
                     issue_code=SiteIssueCode.NETWORK_ERROR,
                 ) from exc
+
+            def renavigate(target: str) -> None:
+                # 重导航失败不应让裸 PlaywrightError 穿透分类：
+                # 优先上报观察器已记录的分类错误，其次归为网络错误。
+                try:
+                    page.goto(target, wait_until="domcontentloaded", timeout=30_000)
+                except Exception as exc:
+                    if should_cancel():
+                        raise DownloadCancelledError("Task cancelled") from exc
+                    if errors:
+                        raise errors[0]
+                    raise TemporaryAccessError(
+                        "Kuaishou page could not be opened. Check the configured "
+                        "proxy and network.",
+                        issue_code=SiteIssueCode.NETWORK_ERROR,
+                    ) from exc
+
             idle = 0
             previous_count = -1
             retry_attempts = 0
@@ -1259,7 +1276,7 @@ def discover(
                     # before its target was known. Observe one normal reload
                     # for item pages as well as profiles (REST-only pages do
                     # not necessarily leave usable Apollo SSR behind).
-                    page.goto(final_url, wait_until="domcontentloaded", timeout=30_000)
+                    renavigate(final_url)
                 elif kind != "short_link" and (
                     final_kind != kind or final_id != identity
                 ):
@@ -1267,7 +1284,7 @@ def discover(
                         "Kuaishou navigated to a different video or author; the response was blocked"
                     )
                 elif final_url != page.url:
-                    page.goto(final_url, wait_until="domcontentloaded", timeout=30_000)
+                    renavigate(final_url)
                     continue
                 state = page.evaluate(
                     "() => window.APOLLO_STATE || window.__APOLLO_STATE__ || {}"

@@ -337,3 +337,43 @@ def test_douyin_rejects_invalid_or_ambiguous_profile_modal_id(query: str) -> Non
 def test_rejects_invalid_or_unsupported_urls(value: str) -> None:
     with pytest.raises((UnsupportedUrlError, ValueError)):
         identify_url(value)
+
+
+def test_douyin_homepage_modal_link_binds_to_single_item() -> None:
+    """抖音首页弹窗复制的根路径 ?modal_id=/vid= 链接是最常见的分享形态，
+    必须与 /user/ 路径同样绑定为单作品，而不是整体拒识。"""
+    media_id = "7664225419386607205"
+
+    for url in (
+        f"https://www.douyin.com/?modal_id={media_id}",
+        f"https://www.douyin.com/?vid={media_id}",
+        f"https://www.douyin.com/user/ABC?modal_id={media_id}",
+    ):
+        info = identify_url(url)
+        assert info.platform is Platform.DOUYIN
+        assert info.kind is SourceKind.ITEM
+        assert info.url == f"https://www.douyin.com/video/{media_id}"
+
+
+def test_douyin_homepage_ambiguous_modal_values_still_rejected() -> None:
+    with pytest.raises(UnsupportedUrlError):
+        identify_url("https://www.douyin.com/?modal_id=111&modal_id=222")
+
+
+def test_youtube_watch_with_list_param_means_single_video() -> None:
+    """watch?v=X&list=Y 与 youtu.be/ID?list=Y 是"列表中的某个视频"的
+    常见复制形态，用户意图为单个视频；仅 /playlist 路径按播放列表处理。"""
+    watch = identify_url("https://www.youtube.com/watch?v=abc123&list=PLxyz")
+    assert watch.kind is SourceKind.ITEM
+
+    short = identify_url("https://youtu.be/abc123?list=PLxyz")
+    assert short.kind is SourceKind.ITEM
+
+    playlist = identify_url("https://www.youtube.com/playlist?list=PLxyz")
+    assert playlist.kind is SourceKind.PLAYLIST
+
+    # 歧义（多个 v 值）时保守按播放列表处理
+    ambiguous = identify_url(
+        "https://www.youtube.com/watch?v=abc123&v=xyz998&list=PLxyz"
+    )
+    assert ambiguous.kind is SourceKind.PLAYLIST

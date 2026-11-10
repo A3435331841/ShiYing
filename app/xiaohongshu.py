@@ -18,7 +18,6 @@ from yt_dlp.networking import Request
 from yt_dlp.networking._requests import RequestsRH, RequestsResponseAdapter
 from yt_dlp.networking.exceptions import (
     CertificateVerifyError,
-    HTTPError,
     ProxyError,
     RequestError,
     SSLError,
@@ -941,7 +940,31 @@ def _open_xiaohongshu_response(
 
         response = RequestsResponseAdapter(raw_response)
         if not 200 <= response.status < 300:
-            raise HTTPError(response)
+            # 先关闭未读的流式响应再分类抛出：既不泄漏 socket，也让
+            # 风控 403/412、限流 429 与 5xx 各自落到正确的用户分类，
+            # 而不是让裸 HTTPError 穿透整个错误体系。
+            status = response.status
+            raw_response.close()
+            if status == 429:
+                raise DiscoveryError(
+                    "小红书正在限流（HTTP 429）。请等待几分钟后再重试。",
+                    issue_code=SiteIssueCode.RATE_LIMITED,
+                )
+            if status in (403, 412):
+                raise DiscoveryError(
+                    f"小红书拒绝了本次请求（HTTP {status}）。请等待几分钟后重试；"
+                    "若持续出现，请确认浏览器能正常打开原链接。",
+                    issue_code=SiteIssueCode.REQUEST_REJECTED,
+                )
+            if status >= 500:
+                raise DiscoveryError(
+                    f"小红书服务器暂时不可用（HTTP {status}）。请稍后重试。",
+                    issue_code=SiteIssueCode.SITE_UNAVAILABLE,
+                )
+            raise DiscoveryError(
+                f"小红书笔记请求返回 HTTP {status}，无法继续解析。",
+                issue_code=SiteIssueCode.SITE_RESPONSE_CHANGED,
+            )
         return response
     raise AssertionError("unreachable Xiaohongshu redirect loop state")
 
@@ -1149,10 +1172,9 @@ def _video_assets(note: dict[str, Any]) -> list[RemoteAsset]:
     if not isinstance(video, dict):
         return []
     assets: list[RemoteAsset] = []
+    consumer = video.get("consumer")
     origin_key = (
-        ((video.get("consumer") or {}).get("originVideoKey"))
-        if isinstance(video, dict)
-        else None
+        consumer.get("originVideoKey") if isinstance(consumer, dict) else None
     )
     if isinstance(origin_key, str) and origin_key:
         assets.append(

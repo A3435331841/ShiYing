@@ -8,6 +8,7 @@ from io import BytesIO
 import pytest
 from yt_dlp import YoutubeDL
 from yt_dlp.networking import Request
+from yt_dlp.networking._requests import RequestsRH
 from yt_dlp.utils import DownloadError
 
 from app.errors import (
@@ -1229,3 +1230,111 @@ def test_image_candidates_prioritize_direct_original_cdn() -> None:
         "https://sns-img-bd.xhscdn.com/notes_pre_post/1040asset",
         "https://ci.xiaohongshu.com/notes_pre_post/1040asset",
     ]
+
+
+class _Non2xxAdapterRaw:
+    def __init__(self):
+        self.closed = False
+
+    def close(self):
+        self.closed = True
+
+
+class _Non2xxFakeResponse:
+    def __init__(self, status_code: int):
+        self.status_code = status_code
+        self.raw = _Non2xxAdapterRaw()
+        self.headers = {}
+        self.reason = "fake"
+        self.url = "https://www.xiaohongshu.com/explore/6411cf99000000001300b6d9"
+        self.closed = False
+
+    @property
+    def is_redirect(self) -> bool:
+        return False
+
+    @property
+    def is_permanent_redirect(self) -> bool:
+        return False
+
+    def close(self):
+        self.closed = True
+
+
+class _Non2xxFakeSession:
+    def __init__(self, response: _Non2xxFakeResponse):
+        self.response = response
+
+    def request(self, *args, **kwargs):
+        return self.response
+
+
+class _Non2xxFakeLogger:
+    def debug(self, *args, **kwargs):
+        pass
+
+    def info(self, *args, **kwargs):
+        pass
+
+    def warning(self, *args, **kwargs):
+        pass
+
+    def error(self, *args, **kwargs):
+        pass
+
+
+class _Non2xxFakeHandler(RequestsRH):
+    def __init__(self, response: _Non2xxFakeResponse):
+        super().__init__(logger=_Non2xxFakeLogger())
+        self.response = response
+
+    def _get_headers(self, request):
+        return {}
+
+    def _get_instance(self, **kwargs):
+        return _Non2xxFakeSession(self.response)
+
+    def _calculate_timeout(self, request):
+        return 10
+
+
+@pytest.mark.parametrize(
+    ("status_code", "expected"),
+    [
+        (403, SiteIssueCode.REQUEST_REJECTED),
+        (412, SiteIssueCode.REQUEST_REJECTED),
+        (429, SiteIssueCode.RATE_LIMITED),
+        (502, SiteIssueCode.SITE_UNAVAILABLE),
+        (404, SiteIssueCode.SITE_RESPONSE_CHANGED),
+    ],
+)
+def test_note_response_non_2xx_is_classified_and_closed(status_code, expected):
+    """非 2xx 响应必须关闭流并落入正确分类，不得让裸 HTTPError 穿透。"""
+
+    from types import SimpleNamespace
+
+    from yt_dlp.networking import Request
+
+    fake_response = _Non2xxFakeResponse(status_code)
+    handler = _Non2xxFakeHandler(fake_response)
+    ydl = SimpleNamespace(
+        _request_director=SimpleNamespace(handlers={"Requests": handler})
+    )
+
+    with pytest.raises(DiscoveryError) as captured:
+        _open_xiaohongshu_response(
+            ydl,
+            Request("https://www.xiaohongshu.com/explore/6411cf99000000001300b6d9"),
+            is_trusted_url=lambda url: True,
+        )
+
+    assert captured.value.issue_code is expected
+    assert fake_response.closed is True
+
+
+def test_video_assets_tolerates_non_dict_consumer():
+    """consumer 为异常标量时返回空资产列表，而非 AttributeError 崩溃。"""
+
+    note = {"video": {"consumer": "https://garbage.example/value"}}
+
+    assert _video_assets(note) == []

@@ -557,11 +557,10 @@ class TransferMixin:
                 )
             finally:
                 if staging_dir is not None:
-                    if operation_succeeded:
-                        shutil.rmtree(staging_dir, ignore_errors=True)
-                    else:
-                        with contextlib.suppress(OSError):
-                            staging_dir.rmdir()
+                    # 成功与失败都整体清理：失败残留的已暂存文件可由 .part
+                    # 缓存或重试重新获得，而随机命名的隐藏目录一旦滞留
+                    # （rmdir 只删得动空目录）就永远不会再被访问。
+                    shutil.rmtree(staging_dir, ignore_errors=True)
         unique_paths = self._existing_unique_paths(paths)
         if not unique_paths:
             raise MediaDownloadError("yt-dlp finished but no output file was found")
@@ -844,6 +843,10 @@ class TransferMixin:
                     request_headers = {
                         "Referer": referer,
                         "Accept": "*/*",
+                        # 媒体按原始字节下载与校验：显式关闭传输层压缩，
+                        # 避免 gzip 下 Content-Length（压缩长度）与实际写入
+                        # 字节数错配，把完整响应误判为不完整。
+                        "Accept-Encoding": "identity",
                     }
                     if is_douyin_source:
                         request_headers["User-Agent"] = DOUYIN_MEDIA_HEADERS[
@@ -1060,11 +1063,15 @@ class TransferMixin:
                     if paired_stem is not None:
                         path = path.with_name(paired_stem + path.suffix)
                     total_header = response.headers.get("Content-Length")
-                    total = (
-                        int(total_header)
-                        if total_header and total_header.isdigit()
-                        else None
+                    # 部分代理会把重复的 Content-Length 合并成 "123, 123"；
+                    # 取第一段并去空白，避免可解析的长度被误判为未知，
+                    # 否则完整性与进度检查会被整体跳过。
+                    total_value = (
+                        str(total_header).split(",")[0].strip()
+                        if total_header
+                        else ""
                     )
+                    total = int(total_value) if total_value.isdigit() else None
                     downloaded = len(first_chunk)
 
                     def progress_percent() -> float | None:

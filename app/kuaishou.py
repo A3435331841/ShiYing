@@ -1169,9 +1169,10 @@ def discover(
                         interruption.append(exc)
                     else:
                         errors.append(exc)
-                except (PlaywrightError, TypeError, ValueError):
+                except (PlaywrightError, TypeError, ValueError, RecursionError):
                     # Irrelevant telemetry and responses that close during teardown
                     # must not become false login/verification requirements.
+                    # RecursionError：超深嵌套的垃圾响应（json.loads 层无深度上限）。
                     return
 
             context.route("**/*", route_request)

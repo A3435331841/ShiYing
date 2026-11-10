@@ -380,3 +380,21 @@ def test_paired_douyin_probe_reuses_only_identical_exact_target(
     assert verified == [probe]
     assert not probe.exists()
     assert set(tmp_path.iterdir()) == {static, target}
+
+
+def test_duplicate_content_length_header_still_enforced_against_truncation(tmp_path):
+    """代理合并出的 "N, N" 形态 Content-Length 必须仍被解析并执行完整性检查，
+    否则无 Content-Length 判定会跳过校验、把截断响应发布成完整文件。"""
+
+    payload = b"\xff\xd8\xff" + b"x" * 500
+    engine = MediaDownloader(DownloaderConfig(cookie_browser=None))
+    response = _Response(payload, "image/jpeg", None)
+    response.headers["Content-Length"] = f"{len(payload)}, {len(payload)}"
+    # 模拟 close 定界响应被服务端提前截断：可读字节远少于声明长度。
+    response.stream = BytesIO(payload[:100])
+    ydl = _AssetYoutubeDL(response)
+
+    with pytest.raises(MediaDownloadError, match="Incomplete media response"):
+        _download_xhs(engine, ydl, tmp_path, MediaType.IMAGE)
+
+    assert not list(tmp_path.glob("*.jpg"))

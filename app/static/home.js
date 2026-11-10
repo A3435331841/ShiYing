@@ -6,7 +6,7 @@
     isActive: job => ['queued', 'discovering', 'capturing', 'downloading', 'postprocessing', 'cancelling'].includes(job.status),
     needsAction: job => ['partial', 'failed', 'needs_auth', 'interrupted', 'cancelled'].includes(job.status)
   });
-  const state = { jobs: new Map(), deleted: new Set(), pendingRemoval: [], pendingSubmit: null, config: null, filter: 'all', view: 'home', ready: false, busy: false, refreshing: false, detailId: null, eventSource: null, recovery: null, query: '', queries: {home: '', tasks: '', completed: ''}, mediaFilter: 'all', platformFilter: 'all', sortOrder: 'newest', manageCompleted: false, selectedCompleted: new Set(), visibleCompleted: [], emptyAction: 'add', cacheCheckedAt: 0 };
+  const state = { jobs: new Map(), deleted: new Set(), pendingRemoval: [], pendingSubmit: null, config: null, filter: 'all', view: 'home', ready: false, busy: false, refreshing: false, detailId: null, eventSource: null, sseUp: false, recovery: null, query: '', queries: {home: '', tasks: '', completed: ''}, mediaFilter: 'all', platformFilter: 'all', sortOrder: 'newest', manageCompleted: false, selectedCompleted: new Set(), visibleCompleted: [], emptyAction: 'add', cacheCheckedAt: 0 };
   const REQUEST_TIMEOUT_MS = 20000;
   // Preview runs a full discovery, and scanning a profile can legitimately take
   // minutes; the QR login flow waits up to five minutes for the user. Those are
@@ -1066,7 +1066,16 @@
     if (state.recovery && state.recovery.message) toast(state.recovery.message, true);
     state.eventSource = new EventSource('/api/events');
     state.eventSource.addEventListener('job',event => { try { put(JSON.parse(event.data)); render(); } catch {} });
-    window.setInterval(() => { if (!document.hidden) refresh(); },4000);
+    // SSE 健康时实时事件已覆盖更新，轮询仅作低频兜底；连接异常时恢复快速轮询。
+    state.eventSource.onopen = () => { state.sseUp = true; refresh(); };
+    state.eventSource.onerror = () => { state.sseUp = false; if (!document.hidden) refresh(); };
+    let pollTick = 0;
+    window.setInterval(() => {
+      if (document.hidden) return;
+      pollTick += 1;
+      if (state.sseUp && pollTick % 8 !== 0) return;
+      refresh();
+    },4000);
     window.addEventListener('beforeunload',() => state.eventSource?.close());
   }
 

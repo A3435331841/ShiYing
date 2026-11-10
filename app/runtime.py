@@ -339,7 +339,6 @@ class ParentProcessMonitor:
         self._handle: int | None = None
         self._missing = False
         if os.name == "nt":
-            import ctypes
             from ctypes import wintypes
 
             kernel32 = _windows_kernel32()

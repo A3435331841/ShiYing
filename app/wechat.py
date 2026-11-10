@@ -14,7 +14,6 @@ from concurrent.futures import ThreadPoolExecutor  # noqa: F401  (兼容旧导�
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, urljoin, urlsplit
-from typing import Optional, Dict, Any
 
 import requests
 from fastapi import APIRouter, HTTPException, Request

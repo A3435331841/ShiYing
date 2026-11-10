@@ -155,9 +155,11 @@ def test_signed_profile_honors_an_expired_shared_progress_budget(
         )
 
 
-def test_serialized_slot_wait_reports_once_and_expires_shared_budget(
+def test_serialized_slot_wait_uses_queue_deadline_not_progress_budget(
     monkeypatch,
 ) -> None:
+    """排队等待签名槽不消耗无进展预算；队列超时上限独立于 120 秒窗口。"""
+
     clock = FakeClock()
     statuses: list[str] = []
 
@@ -183,7 +185,7 @@ def test_serialized_slot_wait_reports_once_and_expires_shared_budget(
     monkeypatch.setattr(douyin_signing, "_SIGNED_FETCH_LOCK", lock)
     entered = False
 
-    with pytest.raises(douyin_signing._SigningNoProgressTimeout):
+    with pytest.raises(douyin_signing._SigningNoProgressTimeout) as captured:
         with douyin_signing._serialized_signed_fetch(
             lambda: False,
             budget=douyin_signing._NoProgressBudget(120),
@@ -192,11 +194,48 @@ def test_serialized_slot_wait_reports_once_and_expires_shared_budget(
             entered = True
 
     assert entered is False
+    assert "signed-queue-timeout" in str(captured.value)
     assert statuses == ["Waiting for the Douyin signed request slot"]
     assert lock.release_calls == 0
     assert lock.timeouts
     assert all(0 < timeout <= 0.2 for timeout in lock.timeouts)
-    assert sum(lock.timeouts) == pytest.approx(120)
+    assert sum(lock.timeouts) == pytest.approx(
+        douyin_signing._SIGNED_FETCH_QUEUE_WAIT_SECONDS
+    )
+
+
+def test_serialized_slot_wait_refreshes_budget_after_acquire(monkeypatch) -> None:
+    """获锁后重开无进展窗口：排队耗时不应挤占持锁后的处理时间。"""
+
+    clock = FakeClock()
+
+    class FlakyLock:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def acquire(self, *, timeout: float) -> bool:
+            self.calls += 1
+            clock.advance(timeout)
+            return self.calls > 3
+
+        def release(self) -> None:
+            pass
+
+    monkeypatch.setattr(
+        douyin_signing,
+        "time",
+        SimpleNamespace(monotonic=clock.monotonic, sleep=clock.sleep),
+    )
+    monkeypatch.setattr(douyin_signing, "_SIGNED_FETCH_LOCK", FlakyLock())
+    budget = douyin_signing._NoProgressBudget(120)
+    entered = False
+
+    with douyin_signing._serialized_signed_fetch(lambda: False, budget=budget):
+        entered = True
+        # 排队耗掉约 0.6 秒；预算窗口应在获锁时重置为完整的 120 秒。
+        assert budget.remaining_seconds() == pytest.approx(120, abs=1)
+
+    assert entered is True
 
 
 def test_chunked_urllib_drip_cannot_extend_shared_deadline(monkeypatch) -> None:

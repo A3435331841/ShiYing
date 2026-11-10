@@ -47,6 +47,9 @@ _PROFILE_SIGNING_SESSION_ATTEMPTS = 3
 _PROFILE_SIGNING_RETRY_BASE_MS = 5_000
 _POLL_INTERVAL_MS = 200
 _SIGNED_NO_PROGRESS_TIMEOUT_SECONDS = 120.0
+# 等待签名槽属于本地排队（系统健康、只是繁忙），不消耗无进展预算；
+# 排队等待上限与单个任务的最长分页时间同量级。
+_SIGNED_FETCH_QUEUE_WAIT_SECONDS = 900.0
 _MAX_GLUE_TAGS = 16
 _MAX_GLUE_BYTES = 1_000_000
 _MAX_SOURCE_HTML_BYTES = 5_000_000
@@ -1041,20 +1044,32 @@ def _serialized_signed_fetch(
     budget = budget or _NoProgressBudget(_SIGNED_NO_PROGRESS_TIMEOUT_SECONDS)
     waiting_reported = False
     acquired = False
+    waited = False
+    queue_deadline = time.monotonic() + _SIGNED_FETCH_QUEUE_WAIT_SECONDS
     while not acquired:
         _raise_if_cancelled(should_cancel)
-        remaining = budget.remaining_seconds()
-        acquired = _SIGNED_FETCH_LOCK.acquire(
-            timeout=min(_POLL_INTERVAL_MS / 1_000, remaining)
-        )
-        if not acquired and not waiting_reported:
-            _emit_status(
-                status_callback,
-                "Waiting for the Douyin signed request slot",
-            )
-            waiting_reported = True
+        acquired = _SIGNED_FETCH_LOCK.acquire(timeout=_POLL_INTERVAL_MS / 1_000)
+        if not acquired:
+            waited = True
+            if time.monotonic() >= queue_deadline:
+                raise _SigningNoProgressTimeout(
+                    "Timed out waiting for the Douyin signed request slot. "
+                    "Reason category: signed-queue-timeout.",
+                    category=None,
+                )
+            if not waiting_reported:
+                _emit_status(
+                    status_callback,
+                    "Waiting for the Douyin signed request slot",
+                )
+                waiting_reported = True
     try:
         _raise_if_cancelled(should_cancel)
+        # 排队时间不消耗无进展预算：实际排过队时在获锁后重开完整窗口。
+        # 未排队则保持原语义——已过期的共享预算在此立即失败，
+        # 不允许带着过期预算打开新的浏览器会话。
+        if waited:
+            budget.refresh()
         budget.remaining_seconds()
         yield
     finally:

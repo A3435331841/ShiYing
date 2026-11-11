@@ -10525,8 +10525,8 @@ def test_xhs_highest_video_failure_never_downloads_lower_rendition(
 
     assert failure.value.issue_code == SiteIssueCode.NETWORK_ERROR
     # 网络类瞬态错误有界重试（3 轮）后仍失败，绝不下载低清替代；
-    # 续跑语义下每轮都会重过一遍候选序列。
-    assert requests == ["highest", "lower"] * 3
+    # 每轮都重过一遍候选，但低清替代因质量下限仍不会被请求。
+    assert requests == ["highest"] * 3
     assert not list(tmp_path.iterdir())
     assert not any(event.event == "completed" for event in events)
 
@@ -10590,7 +10590,8 @@ def test_xhs_original_video_is_measured_against_highest_known_stream(
     if original_dimensions == (1280, 720):
         with pytest.raises(MediaDownloadError):
             engine.download_item(item, Platform.XIAOHONGSHU, tmp_path)
-        assert requests == ["original"] + ["highest"] * 3
+        # original 低于最高清下限被拒、highest 瞬态超时 → 有界 3 轮重试。
+        assert requests == ["original", "highest"] * 3
         assert not list(tmp_path.iterdir())
     else:
         outcome = engine.download_item(item, Platform.XIAOHONGSHU, tmp_path)
@@ -10630,12 +10631,14 @@ def test_xhs_unknown_video_dimensions_use_complete_highest_floor(
         assert len(outcome.output_paths) == 1
         assert Path(outcome.output_paths[0]).read_bytes().endswith(b"unknown")
         assert not list(tmp_path.glob("*.part"))
+        # highest 超时后重试一轮即命中 unknown，成功即返回，不再重试。
+        assert requests == ["highest", "unknown"]
     else:
         with pytest.raises(MediaDownloadError, match="below its declared 1920x1080"):
             engine.download_item(item, Platform.XIAOHONGSHU, tmp_path)
         assert not list(tmp_path.iterdir())
-    # 续跑语义：从首个瞬态失败处重跑，每轮为 [highest, unknown, lower]。
-    assert requests == ["highest", "unknown", "lower"] * 3
+        # highest 瞬态超时、unknown 低于下限（确定性）；每轮重过一遍候选。
+        assert requests == ["highest", "unknown"] * 3
 
 @pytest.mark.parametrize('raw_images', [[{'livePhoto': True}], [{'livePhoto': False}, None]])
 def test_xhs_missing_live_media_keeps_static_and_does_not_complete(monkeypatch, tmp_path, raw_images):
@@ -10691,3 +10694,4 @@ def test_xiaohongshu_share_link_network_failure_keeps_network_error(
         engine._resolve_short_url("https://xhslink.com/abcdefgh")
     assert "请检查网络" in str(excinfo.value)
     assert excinfo.value.issue_code is SiteIssueCode.NETWORK_ERROR
+

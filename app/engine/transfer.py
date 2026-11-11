@@ -698,7 +698,6 @@ class TransferMixin:
         douyin_redirect_errors: list[TemporaryAccessError] = []
         douyin_refresh_errors: list[DouyinMediaRefreshRequiredError] = []
         transfer_transient_errors: list[str] = []
-        transient_positions: set[int] = set()
         is_xiaohongshu_source = platform == Platform.XIAOHONGSHU
         is_douyin_source = platform == Platform.DOUYIN
         is_kuaishou_source = platform == Platform.KUAISHOU
@@ -1273,7 +1272,6 @@ class TransferMixin:
                         not is_douyin_source
                         and self._is_retryable_network_transfer_error(exc)
                     ):
-                        transient_positions.add(asset_position)
                         transfer_transient_errors.append(
                             f"Candidate {candidate_index}: "
                             f"{safe_external_error_message(exc)}"
@@ -1352,7 +1350,6 @@ class TransferMixin:
         if (
             not is_douyin_source
             and transfer_transient_errors
-            and transient_positions
             and _transfer_attempt < TRANSFER_RETRY_ATTEMPTS
         ):
             # 非抖音路径的一次网络抖动此前会永久判死整个资产；

@@ -9,7 +9,7 @@
 [![FastAPI](https://img.shields.io/badge/Framework-FastAPI-teal.svg)](https://fastapi.tiangolo.com/)
 [![Tests](https://img.shields.io/badge/Tests-1100%2B%20Passing-brightgreen.svg)](tests/)
 
-[功能特性](#-功能特性) • [支持平台](#-支持平台) • [快速上手](#-快速上手) • [代码架构](#-代码架构) • [开发文档](#-开发文档) • [更新日志](CHANGELOG.md)
+[功能特性](#-功能特性) • [支持平台](#-支持平台) • [快速上手](#-快速上手) • [代码架构](#-代码架构) • [使用说明](docs/guides/拾影使用说明.md) • [许可证](LICENSE)
 
 </div>
 
@@ -111,14 +111,6 @@ chmod +x scripts/unix/start.sh
 - [全系统功能矩阵清单](docs/specs/拾影项目全功能矩阵清单.xlsx)：功能分类与异常处理表。
 - [本地文件全景审计清单](docs/specs/本地文件全景审计与工程治理清单.md)：仓库文件分布与归档说明。
 - [使用说明书](docs/guides/拾影使用说明.md)：面向用户的操作指南。
-
----
-
-## 🤝 参与开发
-
-- **协作约定**：代码改动请遵循 [AGENTS.md](AGENTS.md)（含智能体防线）与 [CONTRIBUTING.md](CONTRIBUTING.md)。
-- **安全问题**：若发现漏洞请按 [SECURITY.md](SECURITY.md) 的指引反馈。
-- **历史变更**：版本演进见 [CHANGELOG.md](CHANGELOG.md)。
 
 ---
 

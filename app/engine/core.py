@@ -1,4 +1,13 @@
-"""Auto-split from the original downloader module."""
+"""多媒体下载引擎主调度器与管道总装。
+
+本模块定义了核心执行引擎 MediaDownloader，聚合了下载管道的 6 大子领域功能：
+1. NamingMixin：路径规范化、魔数探测、文件名非法字符清洗；
+2. DiscoveryMixin：元数据展开、主页分页抓取与多作品发现；
+3. PlatformItemsMixin：各平台特化实体与媒体流转换适配；
+4. TransferMixin：HTTP Range 断点续传、并发分块写入、网络故障退避重试与速度计算；
+5. DouyinProbeMixin：抖音双源（author-feed vs amemv）探测与 FFprobe 物理码率实测；
+6. DouyinMediaMixin：图文流与 Live Photo 静态/动态成对配准解包。
+"""
 from __future__ import annotations
 import contextlib
 import hashlib
@@ -89,6 +98,11 @@ class MediaDownloader(
     DouyinProbeMixin,
     DouyinMediaMixin,
 ):
+    """拾影核心多媒体下载与发现引擎。
+
+    作为核心下载执行总线，协调网络会话、画质探测、流式传输、格式校验与原子落盘。
+    实例内部通过 threading.local 维护探测上下文，保证多线程并发任务下的安全隔离。
+    """
 
     def __init__(
         self,
@@ -96,6 +110,12 @@ class MediaDownloader(
         *,
         discovery_callback: EventCallback | None = None,
     ) -> None:
+        """初始化下载引擎配置与事件回调。
+
+        Args:
+            config: 全局下载配置（包含超时预算、Cookie 配置、重试次数、落盘限制等）。
+            discovery_callback: 发现阶段事件监听回调（用于向前端推送 SSE 进度）。
+        """
         self.config = config or DownloaderConfig()
         self.discovery_callback = discovery_callback
         self._douyin_probe_context = threading.local()

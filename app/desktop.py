@@ -1,4 +1,11 @@
-"""Open saved media and folders using the local desktop."""
+"""桌面系统集成与本地多媒体资产交互桥梁。
+
+本模块负责处理与操作系统 Shell 的深度原生交互，包含以下核心职责与安全防线：
+1. 媒体打开白名单校验：基于 OPENABLE_MEDIA_SUFFIXES 强校验，严禁执行可执行脚本与二进制；
+2. 跨平台文件定位：支持在 Windows Explorer、macOS Finder、Linux 文件管理器中定位选中目标文件；
+3. Windows 资源管理器智能置顶：基于 pythonnet (clr) STA 单线程单元反射调度 Shell.Application，
+   精准遍历已打开的 Explorer 窗口，复用并将其置顶激活，避免重复弹窗堆叠。
+"""
 import ctypes
 import os
 import stat
@@ -10,6 +17,7 @@ from urllib.parse import urlsplit
 from urllib.request import url2pathname
 
 
+# 允许直接调起系统关联软件打开的媒体文件扩展名白名单（防投毒攻击）
 OPENABLE_MEDIA_SUFFIXES = frozenset({
     ".mp4", ".mkv", ".webm", ".mov", ".m4v", ".avi", ".flv", ".ts",
     ".mp3", ".m4a", ".aac", ".flac", ".ogg", ".wav", ".opus",
@@ -18,6 +26,17 @@ OPENABLE_MEDIA_SUFFIXES = frozenset({
 
 
 def can_open_saved_media(path: Path) -> bool:
+    """检查文件是否符合可信媒体白名单后缀规范。
+
+    执行双层扩展名校验（原始路径后缀与符号链接解析后的真实物理文件后缀），杜绝通过畸变
+    扩展名或软链接指向可执行文件（如 .exe、.bat、.vbs）的投毒行为。
+
+    Args:
+        path: 待校验的目标文件路径。
+
+    Returns:
+        如果双层扩展名均在白名单内返回 True，否则返回 False。
+    """
     return (
         path.suffix.lower() in OPENABLE_MEDIA_SUFFIXES
         and path.resolve().suffix.lower() in OPENABLE_MEDIA_SUFFIXES
@@ -25,6 +44,14 @@ def can_open_saved_media(path: Path) -> bool:
 
 
 def saved_file_facts(paths: list[str]) -> list[dict]:
+    """批量检索并统计已保存文件的物理状态（是否存在、文件字节大小、是否可打开）。
+
+    Args:
+        paths: 文件绝对路径列表。
+
+    Returns:
+        包含文件索引、文件名、绝对路径、物理存在状态、字节大小及可打开标记的字典列表。
+    """
     files = []
     for index, raw in enumerate(paths):
         path = Path(raw)
@@ -47,6 +74,16 @@ def saved_file_facts(paths: list[str]) -> list[dict]:
 
 
 def open_saved_file(path: str, *, reveal: bool = False) -> None:
+    """打开已保存的媒体文件，或在操作系统文件资源管理器中定位并选中该文件。
+
+    Args:
+        path: 文件的绝对路径字符串。
+        reveal: 若为 True，则打开父目录并在 UI 中高亮选中该文件（不直接播放）；
+                若为 False，则调用系统默认关联应用程序打开该媒体。
+
+    Raises:
+        ValueError: 路径非绝对路径、物理文件不存在、或文件类型不在安全白名单内时抛出。
+    """
     recorded = Path(path)
     if not recorded.is_absolute():
         raise ValueError("文件没有有效的绝对路径。")
@@ -54,6 +91,7 @@ def open_saved_file(path: str, *, reveal: bool = False) -> None:
     if not target.is_file():
         raise ValueError("任务记录指向的不是文件。")
     if reveal:
+        # 跨平台高亮定位：Windows 使用 explorer /select, macOS 使用 open -R
         if sys.platform == "win32":
             subprocess.Popen(["explorer.exe", "/select,", str(target)])
         elif sys.platform == "darwin":
@@ -61,7 +99,7 @@ def open_saved_file(path: str, *, reveal: bool = False) -> None:
         else:
             subprocess.Popen(["xdg-open", str(target.parent)])
         return
-    # Saved outputs are untrusted downloads, never launch scripts or executables.
+    # 安全红线：下载的文件属于不可信外部输入，严禁以任何方式执行脚本或可执行二进制
     if not can_open_saved_media(recorded):
         raise ValueError("此文件类型不能直接打开，请在文件夹中查看。")
     if sys.platform == "win32":
@@ -71,11 +109,26 @@ def open_saved_file(path: str, *, reveal: bool = False) -> None:
 
 
 def open_folder_foreground(path: str) -> bool:
+    """打开指定下载目录，并在 Windows 上智能将已打开的同一窗口置顶前台激活。
+
+    在 Windows 桌面体验中，直接使用 explorer.exe 每次都会打开新的文件窗口，造成窗口混乱。
+    本实现通过 Python.NET 运行时调度 COM STA 单线程单元，反射调用 Shell.Application：
+    1. 遍历当前已有的 Explorer 窗口，通过 file:// URI 精准匹配目标文件夹物理路径；
+    2. 若窗口已存在，调用 Win32 SetForegroundWindow / ShowWindow(SW_RESTORE) 直接置顶前台；
+    3. 若窗口不存在，则唤起新 Explorer 并在数秒有界时间内轮询捕获并置顶。
+
+    Args:
+        path: 目标文件夹的绝对路径。
+
+    Returns:
+        Windows 平台下若成功完成前台激活置顶则返回 True；macOS/Linux 无此 API 语义返回 False。
+
+    Raises:
+        ValueError: 路径非绝对路径或目标物理目录不存在。
+    """
     target = Path(path).resolve()
     if not Path(path).is_absolute() or not target.is_dir():
         raise ValueError("下载目录不存在或不是有效的绝对路径。")
-    # 前台激活依赖 Explorer/pythonnet（Windows 专属）；macOS/Linux 用系统
-    # 打开命令直接弹出新窗口，返回 False 表示无前台激活语义。
     if sys.platform == "darwin":
         subprocess.Popen(["open", str(target)])
         return False

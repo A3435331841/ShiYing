@@ -4,7 +4,7 @@ set -euo pipefail
 export PATH="/opt/homebrew/bin:/usr/local/bin:${PATH:-/usr/bin:/bin}"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-cd "$SCRIPT_DIR"
+cd "$SCRIPT_DIR/../.."
 
 PYTHON_CMD=""
 if [ -x ".venv/bin/python" ] \

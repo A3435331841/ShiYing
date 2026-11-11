@@ -1,4 +1,11 @@
-"""Auto-split from the original downloader module."""
+"""多媒体文件命名清洗、目录归档规划与格式魔数探测。
+
+本模块承担下载资产落盘前的标准化命名与物理路径解析职责：
+1. 文件名清洗与截断：清洗跨平台非法字符（Windows / Linux），限制 UTF-8 字节长度防止超长报错；
+2. 格式魔数（Magic Bytes）强校验：通过首部二进制魔数精确嗅探真实多媒体格式（JPEG, PNG, WebP, AVIF, HEIC, MP4 等），
+   拒绝单纯依赖 URL 后缀或上游不可信 Content-Type；
+3. 多平台归档规范：统一生成 "{YYYY-MM-DD}-{Title} [{ID}].{ext}" 或合集紧凑序号 "{Index:03d}.{ext}" 标准路径。
+"""
 from __future__ import annotations
 import contextlib
 import hashlib
@@ -129,6 +136,23 @@ class NamingMixin:
         media_type: MediaType,
         first_bytes: bytes = b"",
     ) -> str:
+        """基于二进制首部魔数 (Magic Bytes) 与 MIME 类型精确探测媒体文件扩展名。
+
+        探测优先级：
+        1. 物理二进制魔数嗅探（最高优先级）：精确判定 JPEG、PNG、GIF、WebP、AVIF、HEIC、MP4；
+        2. HTTP 响应头部 Content-Type 映射兜底；
+        3. URL 原始路径扩展名回退；
+        4. 根据 media_type 降级为 mp4 或 jpg。
+
+        Args:
+            url: 媒体资源的远程下载 URL。
+            content_type: HTTP 响应头部的 Content-Type 字段。
+            media_type: 媒体归类（VIDEO / IMAGE）。
+            first_bytes: 传输开始时捕获的媒体文件前部分字节（至少 12~32 字节）。
+
+        Returns:
+            不带句点的规范化小写扩展名（如 'mp4', 'heic', 'webp', 'jpg'）。
+        """
         ambiguous_iso_image = False
         if first_bytes.startswith(b"\xff\xd8\xff"):
             return "jpg"

@@ -53,7 +53,14 @@ def test_default_server_port_avoids_the_legacy_port() -> None:
     assert DEFAULT_SERVER_PORT == 8766
 
 
-@pytest.mark.parametrize("path", ["start.command", "start.sh", "start.bat"])
+@pytest.mark.parametrize(
+    "path",
+    [
+        "scripts/unix/start.command",
+        "scripts/unix/start.sh",
+        "scripts/dev/start.bat",
+    ],
+)
 def test_launch_scripts_advertise_the_shared_default_port(path: str) -> None:
     script = (PROJECT_ROOT / path).read_text(encoding="utf-8")
 

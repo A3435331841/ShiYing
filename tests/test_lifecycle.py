@@ -35,11 +35,13 @@ def _isolated_project(tmp_path: Path) -> Path:
         "run.py",
         "launcher.py",
         "stop.py",
-        "start.command",
         "pyproject.toml",
         "requirements.txt",
     ):
         shutil.copy2(PROJECT_ROOT / name, project / name)
+    unix_dir = project / "scripts" / "unix"
+    unix_dir.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(PROJECT_ROOT / "scripts" / "unix" / "start.command", unix_dir / "start.command")
     return project
 
 
@@ -684,7 +686,7 @@ def test_start_command_shell_sigkill_stops_bootstrap_tree_and_releases_lock(
     )
     fake_python.chmod(0o700)
     shell = subprocess.Popen(
-        [str(project / "start.command")],
+        [str(project / "scripts" / "unix" / "start.command")],
         cwd=project,
         env=_clean_environment(),
         stdout=subprocess.PIPE,

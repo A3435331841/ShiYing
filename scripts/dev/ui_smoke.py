@@ -12,7 +12,7 @@ from urllib.request import urlopen
 
 import webview
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 from launch_shiying import DesktopAPI
 
@@ -111,18 +111,19 @@ def run():
         window.destroy()
 
 
-desktop_api = DesktopAPI()
-deadline = time.monotonic() + 20
-while True:
-    try:
-        api('/api/health')
-        break
-    except Exception:
-        if time.monotonic() >= deadline:
-            raise
-        time.sleep(.25)
-window = webview.create_window('鎷惧奖鐣岄潰楠屾敹', 'http://127.0.0.1:8766', hidden='--folder-focus' not in sys.argv, js_api=desktop_api, width=1380, height=900)
-desktop_api._window = window
-webview.start(run, gui='edgechromium', storage_path=str(ROOT / 'data/ui-test-webview'))
-print(RESULT.read_text(encoding='utf-8'))
-sys.exit(0 if outcome['passed'] else 1)
+if __name__ == '__main__':
+    desktop_api = DesktopAPI()
+    deadline = time.monotonic() + 20
+    while True:
+        try:
+            api('/api/health')
+            break
+        except Exception:
+            if time.monotonic() >= deadline:
+                raise
+            time.sleep(.25)
+    window = webview.create_window('拾影界面验收', 'http://127.0.0.1:8766', hidden='--folder-focus' not in sys.argv, js_api=desktop_api, width=1380, height=900)
+    desktop_api._window = window
+    webview.start(run, gui='edgechromium', storage_path=str(ROOT / 'data/ui-test-webview'))
+    print(RESULT.read_text(encoding='utf-8'))
+    sys.exit(0 if outcome['passed'] else 1)

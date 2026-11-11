@@ -1,6 +1,6 @@
 @echo off
 setlocal
-cd /d "%~dp0"
+cd /d "%~dp0..\.."
 
 set "PYTHON_CMD="
 if exist ".venv\Scripts\python.exe" (

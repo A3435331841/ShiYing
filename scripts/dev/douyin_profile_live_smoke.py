@@ -17,7 +17,7 @@ from typing import Any, Callable, Sequence
 from unittest import mock
 from urllib.parse import urlsplit
 
-REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 if str(REPOSITORY_ROOT) not in sys.path:
     sys.path.insert(0, str(REPOSITORY_ROOT))
 
@@ -26,7 +26,7 @@ from app.downloader import DownloaderConfig, MediaDownloader
 from app.errors import SiteIssueCode, classify_site_issue
 from app.models import MediaType, Platform, SourceKind
 from app.platforms import identify_url
-from scripts.douyin_item_live_smoke import (
+from .douyin_item_live_smoke import (
     _stop_worker,
     anonymous_browser_adapter,
     exception_chain,

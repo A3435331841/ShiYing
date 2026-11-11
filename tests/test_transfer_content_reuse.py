@@ -47,7 +47,9 @@ def _mock_asset_opener(monkeypatch):
     monkeypatch.setattr(transfer, "_open_xiaohongshu_response", open_response)
 
 
-def _download_xhs(engine, ydl, output_dir, media_type, *, asset_size=None, **kwargs):
+def _download_xhs(
+    engine, ydl, output_dir, media_type, *, asset_size=None, callback=None, **kwargs
+):
     host = "sns-img-bd.xhscdn.com" if media_type == MediaType.IMAGE else "sns-video-bd.xhscdn.com"
     return engine._download_first_available_asset(
         ydl,
@@ -59,7 +61,7 @@ def _download_xhs(engine, ydl, output_dir, media_type, *, asset_size=None, **kwa
         "https://www.xiaohongshu.com/explore/note-id",
         platform=Platform.XIAOHONGSHU,
         media_type=media_type,
-        callback=None,
+        callback=callback,
         should_cancel=lambda: False,
         asset_index=1,
         **kwargs,
@@ -107,14 +109,25 @@ def test_matching_existing_size_does_not_hide_incomplete_response(tmp_path):
     engine = MediaDownloader(DownloaderConfig(cookie_browser=None))
     base = _base_path(engine, tmp_path, "jpg")
     base.write_bytes(payload)
-    response = _Response(payload[:100], "image/jpeg", len(payload))
+    responses = []
+
+    def truncated_response():
+        # 每次尝试给一份全新的截断响应（模拟真实服务器的每请求行为），
+        # 有界重试的每一次都会同样不完整。
+        response = _Response(payload[:100], "image/jpeg", len(payload))
+        responses.append(response)
+        return response
+
+    class TruncatedYoutubeDL:
+        def urlopen(self, request):
+            return truncated_response()
 
     with pytest.raises(MediaDownloadError, match="Incomplete media response"):
-        _download_xhs(engine, _AssetYoutubeDL(response), tmp_path, MediaType.IMAGE)
+        _download_xhs(engine, TruncatedYoutubeDL(), tmp_path, MediaType.IMAGE)
 
     assert base.read_bytes() == payload
-    assert response.reads[-1] == b""
-    assert response.closed
+    assert responses[-1].reads[-1] == b""
+    assert responses[-1].closed
     assert set(tmp_path.iterdir()) == {base}
 
 
@@ -388,11 +401,16 @@ def test_duplicate_content_length_header_still_enforced_against_truncation(tmp_p
 
     payload = b"\xff\xd8\xff" + b"x" * 500
     engine = MediaDownloader(DownloaderConfig(cookie_browser=None))
-    response = _Response(payload, "image/jpeg", None)
-    response.headers["Content-Length"] = f"{len(payload)}, {len(payload)}"
-    # 模拟 close 定界响应被服务端提前截断：可读字节远少于声明长度。
-    response.stream = BytesIO(payload[:100])
-    ydl = _AssetYoutubeDL(response)
+
+    def truncated_response():
+        response = _Response(payload, "image/jpeg", None)
+        response.headers["Content-Length"] = f"{len(payload)}, {len(payload)}"
+        # 模拟 close 定界响应被服务端提前截断：可读字节远少于声明长度。
+        response.stream = BytesIO(payload[:100])
+        return response
+
+    ydl = _AssetYoutubeDL(truncated_response())
+    ydl.urlopen = lambda request: truncated_response()
 
     with pytest.raises(MediaDownloadError, match="Incomplete media response"):
         _download_xhs(engine, ydl, tmp_path, MediaType.IMAGE)
@@ -452,3 +470,83 @@ def test_image_dimensions_missing_after_deep_scan_still_fails(tmp_path):
             MediaType.IMAGE,
             verify_declared_dimensions=True,
         )
+
+
+def test_transient_network_error_is_retried_then_published(tmp_path):
+    """非抖音路径的一次网络抖动不应永久判死资产：有界重试后成功发布。"""
+    from yt_dlp.networking.exceptions import TransportError
+
+    payload = b"\xff\xd8\xff" + b"x" * 400
+    engine = MediaDownloader(DownloaderConfig(cookie_browser=None))
+    response = _Response(payload, "image/jpeg", None)
+
+    class FlakyYoutubeDL:
+        def __init__(self):
+            self.calls = 0
+
+        def urlopen(self, request):
+            self.calls += 1
+            if self.calls == 1:
+                raise TransportError(cause=ConnectionError("connection reset"))
+            return _Response(payload, "image/jpeg", None)
+
+    ydl = FlakyYoutubeDL()
+    events = []
+    path, _ = _download_xhs(
+        engine, ydl, tmp_path, MediaType.IMAGE, callback=events.append
+    )
+
+    assert path.read_bytes() == payload
+    assert ydl.calls == 2
+    retry_events = [
+        event for event in events if "Retrying media transfer" in (event.message or "")
+    ]
+    assert retry_events, "重试必须有进度提示"
+
+
+def test_persistent_transient_error_is_bounded(tmp_path):
+    """持续性瞬态错误的重试有上限（3 次），不得无限循环。"""
+    from yt_dlp.networking.exceptions import TransportError
+
+    from app.engine.transfer import TRANSFER_RETRY_ATTEMPTS
+
+    engine = MediaDownloader(DownloaderConfig(cookie_browser=None))
+
+    class AlwaysDown:
+        def __init__(self):
+            self.calls = 0
+
+        def urlopen(self, request):
+            self.calls += 1
+            raise TransportError(cause=ConnectionError("reset"))
+
+    ydl = AlwaysDown()
+    with pytest.raises(MediaDownloadError, match="All highest-available"):
+        _download_xhs(engine, ydl, tmp_path, MediaType.IMAGE)
+
+    assert ydl.calls == TRANSFER_RETRY_ATTEMPTS
+
+
+def test_security_block_propagates_for_queue_pause(tmp_path):
+    """安全拦截走 TemporaryAccessError 队列暂停语义（既有重试机制，
+    级别高于传输层有界重试），不进入传输层重试。"""
+    from app.errors import SiteIssueCode, TemporaryAccessError
+
+    engine = MediaDownloader(DownloaderConfig(cookie_browser=None))
+
+    class SecurityDown:
+        def __init__(self):
+            self.calls = 0
+
+        def urlopen(self, request):
+            self.calls += 1
+            raise TemporaryAccessError(
+                "blocked before requesting an untrusted target",
+                issue_code=SiteIssueCode.SECURITY_BLOCKED,
+            )
+
+    ydl = SecurityDown()
+    with pytest.raises(TemporaryAccessError, match="blocked before requesting"):
+        _download_xhs(engine, ydl, tmp_path, MediaType.IMAGE)
+
+    assert ydl.calls == 1

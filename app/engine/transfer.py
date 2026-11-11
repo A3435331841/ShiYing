@@ -68,6 +68,10 @@ from ..file_publish import (
     publish_pair_image,
     publish_unique,
 )
+
+# 非抖音传输的网络类瞬态重试上限与退避基数（参照 DOUYIN_TRANSFER_ATTEMPTS）。
+TRANSFER_RETRY_ATTEMPTS = 3
+TRANSFER_RETRY_BASE_SECONDS = 0.8
 from ..xiaohongshu import RemoteAsset, discover_profile as discover_xhs_profile
 from ..xiaohongshu import (
     _XiaohongshuRedirectRejected,
@@ -687,17 +691,20 @@ class TransferMixin:
         compact_names: bool = False,
         _douyin_transfer_attempt: int = 1,
         _douyin_transfer_budget: _DouyinNoProgressBudget | None = None,
+        _transfer_attempt: int = 1,
     ) -> tuple[Path, RemoteAsset]:
         errors: list[str] = []
         douyin_transient_errors: list[str] = []
         douyin_redirect_errors: list[TemporaryAccessError] = []
         douyin_refresh_errors: list[DouyinMediaRefreshRequiredError] = []
+        transfer_transient_errors: list[str] = []
+        transient_positions: set[int] = set()
         is_xiaohongshu_source = platform == Platform.XIAOHONGSHU
         is_douyin_source = platform == Platform.DOUYIN
         is_kuaishou_source = platform == Platform.KUAISHOU
         is_bilibili_source = platform == Platform.BILIBILI
         transfer_budget = _douyin_transfer_budget
-        for asset in assets:
+        for asset_position, asset in enumerate(assets):
             allow_verified_douyin_redirect = bool(
                 is_douyin_source
                 and media_type == MediaType.VIDEO
@@ -1262,6 +1269,15 @@ class TransferMixin:
                         douyin_transient_errors.append(
                             self._safe_douyin_probe_failure(exc)
                         )
+                    if (
+                        not is_douyin_source
+                        and self._is_retryable_network_transfer_error(exc)
+                    ):
+                        transient_positions.add(asset_position)
+                        transfer_transient_errors.append(
+                            f"Candidate {candidate_index}: "
+                            f"{safe_external_error_message(exc)}"
+                        )
                     errors.append(
                         f"Candidate {candidate_index}: "
                         f"{safe_external_error_message(exc)}"
@@ -1333,12 +1349,80 @@ class TransferMixin:
                 f"{detail}",
                 issue_code=classify_site_issue(detail),
             )
+        if (
+            not is_douyin_source
+            and transfer_transient_errors
+            and transient_positions
+            and _transfer_attempt < TRANSFER_RETRY_ATTEMPTS
+        ):
+            # 非抖音路径的一次网络抖动此前会永久判死整个资产；
+            # 参照抖音既有模式做最小有界重试（仅网络类瞬态，
+            # 指数退避，取消信号随时直通）。
+            if callback:
+                callback(
+                    EngineEvent(
+                        event="probing",
+                        message=(
+                            "Retrying media transfer after a temporary "
+                            "network error "
+                            f"({_transfer_attempt + 1}/"
+                            f"{TRANSFER_RETRY_ATTEMPTS})"
+                        ),
+                    )
+                )
+            remaining_wait = TRANSFER_RETRY_BASE_SECONDS * (
+                2 ** (_transfer_attempt - 1)
+            )
+            while remaining_wait > 0:
+                if should_cancel():
+                    raise DownloadCancelledError("Task cancelled")
+                slice_sleep = min(0.1, remaining_wait)
+                time.sleep(slice_sleep)
+                remaining_wait -= slice_sleep
+            return self._download_first_available_asset(
+                ydl,
+                # 从首个瞬态失败处续跑：其后资产的确定性失败会随重跑
+                # 再次失败（有界浪费），但不会丢失任何后续资产的机会。
+                assets,
+                output_dir,
+                upload_date,
+                title,
+                media_id,
+                source_url,
+                platform=platform,
+                media_type=media_type,
+                callback=callback,
+                should_cancel=should_cancel,
+                asset_index=asset_index,
+                progress_index=progress_index,
+                progress_count=progress_count,
+                verify_declared_dimensions=verify_declared_dimensions,
+                require_quality_fingerprint=require_quality_fingerprint,
+                pair_image=pair_image,
+                paired_stem=paired_stem,
+                compact_names=compact_names,
+                _transfer_attempt=_transfer_attempt + 1,
+            )
         if douyin_redirect_errors:
             raise douyin_redirect_errors[-1]
         if douyin_refresh_errors:
             raise douyin_refresh_errors[-1]
         detail = errors[-1] if errors else "No asset URLs were available"
         raise MediaDownloadError(f"All highest-available media URLs failed: {detail}")
+    def _is_retryable_network_transfer_error(self, exc: BaseException) -> bool:
+        """非抖音传输的网络类瞬态错误：一次抖动不应永久判死一个资产。
+        TemporaryAccessError 不在此列——它在候选循环被直接上抛，
+        走队列暂停语义（那本身就是它的重试机制）。"""
+        if isinstance(exc, (TransportError, IncompleteRead)):
+            return True
+        if isinstance(exc, MediaDownloadError):
+            message = str(exc).lower()
+            return (
+                "incomplete media response" in message
+                or "empty response" in message
+            )
+        return False
+
     def _verify_local_video_asset(
         self,
         path: Path,

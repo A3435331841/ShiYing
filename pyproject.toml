@@ -2,6 +2,9 @@
 name = "shiying"
 version = "0.3.0"
 description = "拾影：在本机运行的媒体下载工具（Web GUI + 桌面壳）。"
+# 含 GPL-3.0-or-later 的快手模块，组合发行遵循 GPL-3.0-or-later；
+# 原始 MIT 文件保留其归属（见 NOTICE.md 与 LICENSE / LICENSE.MIT）。
+license = { text = "GPL-3.0-or-later" }
 requires-python = ">=3.10"
 dependencies = [
     "fastapi>=0.115,<1",

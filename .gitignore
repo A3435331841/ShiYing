@@ -30,6 +30,8 @@ graphify-out/
 artifacts/
 .claude/
 .zcode/
+# 本地开发日志（含内部修复过程细节），不发布
+/完整修复推进记录.md
 # 打包产物（未来分发用）
 dist/
 build/

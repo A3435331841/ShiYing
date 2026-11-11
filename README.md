@@ -2,15 +2,14 @@
 
 # 拾影 · Shiying
 
-**专业级多媒体本地高保真采集与归档引擎**
+**在本机运行的 Web 媒体下载与整理工具**
 
 [![Python Version](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-green.svg)](LICENSE)
 [![FastAPI](https://img.shields.io/badge/Framework-FastAPI-teal.svg)](https://fastapi.tiangolo.com/)
-[![Tests](https://img.shields.io/badge/Tests-1900%2B%20Passing-brightgreen.svg)](tests/)
-[![Architecture](https://img.shields.io/badge/Architecture-SPI%20Modular-orange.svg)](docs/specs/平台接入架构规范与工程治理准则.md)
+[![Tests](https://img.shields.io/badge/Tests-1100%2B%20Passing-brightgreen.svg)](tests/)
 
-[功能特性](#-核心特性) • [平台矩阵](#-全平台支持矩阵) • [快速上手](#-快速上手) • [架构全景](#-系统架构) • [开发规范](#-开发与协作规范) • [更新日志](CHANGELOG.md)
+[功能特性](#-功能特性) • [支持平台](#-支持平台) • [快速上手](#-快速上手) • [代码架构](#-代码架构) • [开发文档](#-开发文档) • [更新日志](CHANGELOG.md)
 
 </div>
 
@@ -18,34 +17,38 @@
 
 ## 📖 项目简介
 
-**拾影（Shiying）** 是一款专注于**“本地化、高保真、零二压、去中心化”**的多媒体资源采集与归档工具。它在本地运行轻量 Web 服务，支持主流短视频、长视频、图集、Live Photo 实况照片及私有流媒体的批量解析与原画归档。
+**拾影（Shiying）** 是一个在本地运行的 Web 工具，默认监听 `http://127.0.0.1:8766`。粘贴主流平台的内容链接，自动解析并把视频、图集、实况照片下载到本机。
 
-系统遵循**“严格不二次重编码、无损封装合并、实测物理参数优选”**原则，拒绝网页端清晰度标签欺骗，自动探测并保存平台当前所能分发的最高规格媒体流。
-
----
-
-## ⚡ 核心特性
-
-- 🎯 **真实天花板画质**：4K/8K 自动优选，拒绝虚假 2K/4K 标签，全链路通过 FFprobe 实测物理码率与实际分辨率。
-- 🔄 **零二次重编码 (No Re-encoding)**：直接保存平台分发的原始字节；分离音频/视频轨仅通过 FFmpeg 进行无损封装合并（Remux）。
-- 📸 **实况照片完备成对**：小红书、抖音 Live Photo 静态图与同名动态 MP4 独占锁成对落盘，绝不错位。
-- 🛡️ **断点续传与自愈清理**：原生 HTTP Range 分块断续传输，416 异常自愈，首尾 64KB 极速哈希碰撞去重与秒传。
-- 🔐 **硬件级安全防护**：Windows 本地凭据采用 DPAPI 硬件密钥隔离加密；SSRF 逐跳检查与 23 种可打开媒体白名单防投毒。
-- 🖥️ **本地极简无感运行**：基于 Win32 Job Object 与 Mutex 单实例管理，双击即开，退出即销毁，杜绝后台僵尸进程。
+它遵循几个基本原则：
+- **不重编码**：直接保存平台分发的原始字节；音视频分离的流仅用 FFmpeg 做无损封装合并（remux），不降低画质。
+- **自动探测最高可用画质**：绕过网页端的低清占位，优先获取平台当前提供的最高规格流。
+- **结构化归档**：按作者建立文件夹，文件名以发布日期开头，多图与实况照片自动排号。
+- **单机完全受控**：任务状态与下载内容全在本地，不上传云端，不收集用户数据。
 
 ---
 
-## 🌐 全平台支持矩阵
+## ⚡ 功能特性
 
-| 平台 | 覆盖范围 | 核心逆向与处理技术 | 画质与特性支持 |
+- **原画下载**：优先使用原图与原画视频流，拒绝网页端低码率转码；音视频分离轨通过 FFmpeg 无损合并。
+- **实况照片配对**：小红书、抖音的 Live Photo 静态图与同名动态 MP4 保证同一 stem 成对落盘，避免错位或丢动态轨。
+- **断点续传与内容去重**：支持 HTTP Range 分块断点续传；本地文件存在时做分块全字节比对，内容相同安全复用，不同则自动递增编号，不盲目覆盖。
+- **本地凭据保护**：Windows 下的敏感配置调用系统 DPAPI 保护；打开文件做后缀白名单与路径校验。
+- **可靠的单实例与启停**：通过 Windows 互斥锁（Mutex）与进程看门狗保证单实例运行；退出时安全回收子进程，不遗留后台孤儿。
+- **清晰的错误提示**：明确区分限流、验证码、登录失效、接口变动与网络错误，不把所有失败都笼统报成「下载失败」。
+
+---
+
+## 🌐 支持平台
+
+| 平台 | 支持内容 | 关键处理逻辑 | 说明 |
 | :--- | :--- | :--- | :--- |
-| **小红书** | 单视频 / 图文 / 实况 / 主页滚动 | Direct CDN 还原、`originVideoKey` 优先 | 原图 HEIC、无水印原画视频、Live Photo 配对 |
-| **抖音** | 单视频 / 图集 / 实况 / 作者主页 | SecSDK a_bogus 签名、双源探测 (author-feed & amemv) | 2K/4K 原画实测、Live Photo 成对、去重防串号 |
-| **抖音精选** | 知识合集 / 横屏长视频 / 专辑 | 独立 `/m/video` 路由展开、专有目录分治 | 独立归档至 `downloads/Selected-Douyin/` |
-| **快手** | 单作品 / 短链 / 图集 / 作者主页 | Playwright CDP 被动网络监听、有界分页 | 横版图集、竖版 16 切片长图完整保留 |
-| **哔哩哔哩** | 单P / 多P选集 (`?p=1`) / 专栏图文 | 动态 Opus 正文解析、选集批量前缀排号 | `bestvideo*+bestaudio` 无损 FFmpeg Remux |
-| **YouTube** | 常规 / Shorts / 播放列表 / 频道 | Deno 沙箱驱动执行 n-sig 解密挑战 | 4K/8K 极限分离流提取、音视频合成 |
-| **微信视频号** | 单作品私有流媒体 | 腾讯元宝 Session 桥接、ISAAC64 头部 128KB 动态解密 | DPAPI 凭据安全存储、解密流 FFprobe 校验 |
+| **小红书** | 单视频 / 图文 / 实况 / 主页滚动 | 优先 direct CDN 与 `originVideoKey` 原视频流 | 支持原图 HEIC，实况静态+动态配对 |
+| **抖音** | 单视频 / 图集 / 实况 / 作者主页 | 双源探测（author-feed 与 amemv），本地浏览器辅助签名 | 2K/4K 选流，实况配对，主页防串号 |
+| **抖音精选** | 横屏长视频 / 知识合集 / 专辑 | 独立 `/m/video` 路由解析 | 独立保存至 `downloads/Selected-Douyin/` |
+| **快手** | 单作品 / 短链接 / 图集 / 作者主页 | Playwright CDP 监听真实网络响应 | 完整保留横版图集与竖版切片图 |
+| **哔哩哔哩** | 单 P / 多 P 选集 / 专栏图文 | 动态 Opus 解析，多 P 批量排号 | 音视频轨走 `bestvideo+bestaudio` 无损合并 |
+| **YouTube** | 常规视频 / Shorts / 播放列表 / 频道 | 基于 yt-dlp 与 Deno 执行签名挑战 | 提取高分辨率分离流并合成 |
+| **微信视频号** | 单作品私有流 | 本地会话桥接，头部 ISAAC64 解密 | 凭据 DPAPI 加密，解密流经 FFprobe 校验 |
 
 ---
 
@@ -53,13 +56,13 @@
 
 ### 环境准备
 - **Python** 3.10 或更高版本
-- **Google Chrome**（用于 Cookie 会话与风控探测）
-- **FFmpeg / FFprobe**（加入系统 PATH，用于媒体无损封装与画质探测）
+- **Google Chrome**（用于辅助会话与必要时的风控验证）
+- **FFmpeg / FFprobe**（加入系统 PATH，用于音视频合并与画质探测）
 
-### Windows (推荐)
-直接在项目根目录下双击运行：
-- **`启动拾影.bat`**：启动应用并在浏览器自动打开 `http://127.0.0.1:8766`。
-- **`停止拾影.bat`**：一键安全停机，平稳释放端口与互斥锁。
+### Windows（推荐）
+在项目根目录下双击运行：
+- **`启动拾影.bat`**：启动服务并在默认浏览器打开 `http://127.0.0.1:8766`。
+- **`停止拾影.bat`**：安全停机，释放端口与互斥锁。
 
 ### macOS / Linux
 ```bash
@@ -73,50 +76,52 @@ chmod +x scripts/unix/start.sh
 
 ---
 
-## 🏗️ 系统架构
+## 🏗️ 代码架构
 
-系统遵循 **Clean Architecture** 分层与 **SPI (Service Provider Interface)** 插件化设计：
+代码分层保持清晰，各司其职：
 
 ```
-[UI / Web 表现层] ──── HTTP / SSE ───► [FastAPI 调度路由 (app/main.py)]
+[前端界面 / Web UI] ─── HTTP / SSE ───► [FastAPI 路由 (app/main.py)]
                                                   │
-                 ┌────────────────────────────────┴───────────────────────────────┐
-                 ▼                                                                ▼
-      [app/manager/ 任务状态中心]                                    [app/platforms/ 统一平台 SPI]
-      ├─ core.py (任务增删改查)                                       ├─ base.py (PlatformProvider)
-      ├─ lifecycle.py (10种状态变迁)                                   ├─ douyin / selected_douyin
-      └─ queue.py (并发槽位调度)                                      ├─ xiaohongshu / kuaishou
-                 │                                                    ├─ bilibili / youtube / wechat
-                 └────────────────────────────────┬───────────────────┘
+                 ┌────────────────────────────────┴──────────────────────────────┐
+                 ▼                                                               ▼
+      [app/manager/ 任务状态中心]                                    [平台接入模块]
+      ├─ core.py (任务增删改查)                                       ├─ platforms.py (统一平台元数据与分发)
+      ├─ lifecycle.py (状态变迁与流转)                                ├─ xiaohongshu.py / douyin.py
+      ├─ douyin_profile.py (抖音主页分页)                             ├─ kuaishou.py / bilibili_opus.py
+      └─ xiaohongshu.py (小红书主页滚动)                              └─ wechat.py / wechat_isaac.py
+                 │                                                               │
+                 └────────────────────────────────┬──────────────────────────────┘
                                                   ▼
                                       [app/engine/ 下载传输引擎]
-                                      ├─ transfer.py (Range断点续传/自愈重试)
-                                      ├─ naming.py (跨平台路径清洗/180字节截断)
-                                      └─ file_publish.py (首尾哈希去重/原子落盘)
+                                      ├─ core.py (MediaDownloader 门面与调度)
+                                      ├─ transfer.py (Range 分块下载与网络重试)
+                                      ├─ naming.py (跨平台文件名清洗与长度截断)
+                                      └─ file_publish.py (全字节比对去重与原子落盘)
 ```
 
----
-
-## 📚 知识中心与规范导航
-
-- 📘 [平台接入架构规范与工程治理准则](docs/specs/平台接入架构规范与工程治理准则.md)：系统设计哲学与 6 大 SPI 声明。
-- 🔬 [媒体探测与画质保障技术白皮书](docs/specs/媒体探测与画质保障技术白皮书.md)：画质探测与反标签欺骗深度原理解析。
-- 📊 [全系统功能与极端分支清单 (279 项)](docs/specs/拾影项目全功能矩阵清单.xlsx)：全量功能、15 类异常决策树与 API 字典。
-- 📋 [本地文件全景审计与工程治理清单](docs/specs/本地文件全景审计与工程治理清单.md)：全量 1,399 项文件资产治理决策。
-- 📖 [拾影操作使用说明书](docs/guides/拾影使用说明.md)：面向最终用户的图文使用指南。
+兼容说明：`app/downloader.py` 和 `app/task_manager.py` 保留为兼容门面，旧的导入通路和测试调用不受影响。
 
 ---
 
-## 🤝 开发者与社区规范
+## 📚 开发文档
 
-我们遵循现代顶级开源项目工程标准：
-- **AI 智能体开发规范**：参阅 [AGENTS.md](AGENTS.md) 了解智能体行为防线与代码修改铁律。
-- **开源贡献指南**：参阅 [CONTRIBUTING.md](CONTRIBUTING.md) 了解代码风格与 PR 提交规范。
-- **安全漏洞披露**：参阅 [SECURITY.md](SECURITY.md) 提交私密漏洞报告。
-- **变更记录**：完整历史演进记录请查阅 [CHANGELOG.md](CHANGELOG.md)。
+- [平台接入架构规范与工程治理准则](docs/specs/平台接入架构规范与工程治理准则.md)：架构约定与平台接入规范。
+- [媒体探测与画质保障技术白皮书](docs/specs/媒体探测与画质保障技术白皮书.md)：画质探测与多流选优原理。
+- [全系统功能矩阵清单](docs/specs/拾影项目全功能矩阵清单.xlsx)：功能分类与异常处理表。
+- [本地文件全景审计清单](docs/specs/本地文件全景审计与工程治理清单.md)：仓库文件分布与归档说明。
+- [使用说明书](docs/guides/拾影使用说明.md)：面向用户的操作指南。
+
+---
+
+## 🤝 参与开发
+
+- **协作约定**：代码改动请遵循 [AGENTS.md](AGENTS.md)（含智能体防线）与 [CONTRIBUTING.md](CONTRIBUTING.md)。
+- **安全问题**：若发现漏洞请按 [SECURITY.md](SECURITY.md) 的指引反馈。
+- **历史变更**：版本演进见 [CHANGELOG.md](CHANGELOG.md)。
 
 ---
 
 ## 📄 开源许可证
 
-本项目核心代码基于 **[GPL-3.0-or-later](LICENSE)** 开源协议，引用的第三方兼容模块保留其原始协议（见 [NOTICE.md](NOTICE.md)）。
+本项目核心代码采用 **[GPL-3.0-or-later](LICENSE)** 许可；引用的第三方兼容模块保留其原始协议，详情见 [NOTICE.md](NOTICE.md)。

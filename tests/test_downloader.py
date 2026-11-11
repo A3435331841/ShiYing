@@ -10524,7 +10524,9 @@ def test_xhs_highest_video_failure_never_downloads_lower_rendition(
         )
 
     assert failure.value.issue_code == SiteIssueCode.NETWORK_ERROR
-    assert requests == ["highest"]
+    # 网络类瞬态错误有界重试（3 轮）后仍失败，绝不下载低清替代；
+    # 续跑语义下每轮都会重过一遍候选序列。
+    assert requests == ["highest", "lower"] * 3
     assert not list(tmp_path.iterdir())
     assert not any(event.event == "completed" for event in events)
 
@@ -10588,7 +10590,7 @@ def test_xhs_original_video_is_measured_against_highest_known_stream(
     if original_dimensions == (1280, 720):
         with pytest.raises(MediaDownloadError):
             engine.download_item(item, Platform.XIAOHONGSHU, tmp_path)
-        assert requests == ["original", "highest"]
+        assert requests == ["original"] + ["highest"] * 3
         assert not list(tmp_path.iterdir())
     else:
         outcome = engine.download_item(item, Platform.XIAOHONGSHU, tmp_path)
@@ -10632,7 +10634,8 @@ def test_xhs_unknown_video_dimensions_use_complete_highest_floor(
         with pytest.raises(MediaDownloadError, match="below its declared 1920x1080"):
             engine.download_item(item, Platform.XIAOHONGSHU, tmp_path)
         assert not list(tmp_path.iterdir())
-    assert requests == ["highest", "unknown"]
+    # 续跑语义：从首个瞬态失败处重跑，每轮为 [highest, unknown, lower]。
+    assert requests == ["highest", "unknown", "lower"] * 3
 
 @pytest.mark.parametrize('raw_images', [[{'livePhoto': True}], [{'livePhoto': False}, None]])
 def test_xhs_missing_live_media_keeps_static_and_does_not_complete(monkeypatch, tmp_path, raw_images):

@@ -834,6 +834,11 @@ def _extract_video_thumbnail_locked(video_path: Path, output_path: Path) -> bool
             cmd = [
                 ffmpeg, "-ss", ss, "-i", str(video_path),
                 "-vframes", "1", "-vf", "scale=360:-1", "-q:v", "3",
+                # Explicit muxer: the temp file ends in .tmp, so ffmpeg would
+                # otherwise infer an unknown format from the extension and
+                # fail with "Error opening output file". image2 keeps the
+                # mjpeg writer regardless of the temp suffix.
+                "-f", "image2",
                 str(temp_path), "-y",
             ]
             try:

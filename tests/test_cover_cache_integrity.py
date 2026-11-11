@@ -172,6 +172,61 @@ def test_atomic_extraction_leaves_no_partial_tmp(tmp_path, monkeypatch):
     assert leftovers == []
 
 
+def test_extraction_pins_image2_muxer_for_temp_output(tmp_path, monkeypatch):
+    thumb_dir = _patch_thumbnail_dir(tmp_path, monkeypatch)
+
+    media = tmp_path / "media"
+    media.mkdir()
+    video = media / "vid.mp4"
+    video.write_bytes(b"whatever")
+    monkeypatch.setattr(
+        main.manager, "get_job", lambda jid: _job_with_video("job-muxer", video)
+    )
+    monkeypatch.setattr(
+        main.MediaDownloader,
+        "_find_ffmpeg_executable",
+        staticmethod(lambda: "ffmpeg"),
+    )
+
+    # Existence-aware decoder: only a file that actually has bytes "decodes".
+    # This keeps the not-yet-created cache from short-circuiting extraction
+    # while still letting the freshly written temp pass verification.
+    def decodable(path: Path) -> bool | None:
+        try:
+            return path.is_file() and path.stat().st_size > 0
+        except OSError:
+            return False
+
+    monkeypatch.setattr(main, "_verify_thumbnail_decodable", decodable)
+
+    # Stand in for ffmpeg: record the exact command and "succeed" by writing
+    # the requested output file, mimicking the real tool's behavior.
+    captured: dict = {}
+
+    def fake_run(cmd, **kwargs):
+        captured["cmd"] = cmd
+        out_arg = cmd[cmd.index("-y") - 1]
+        Path(out_arg).write_bytes(b"thumbnail")
+
+        class _Result:
+            returncode = 0
+
+        return _Result()
+
+    monkeypatch.setattr(main.subprocess, "run", fake_run)
+
+    client = TestClient(main.app, base_url="http://127.0.0.1")
+    resp = client.get("/api/jobs/job-muxer/cover")
+
+    assert resp.status_code == 200
+    assert (thumb_dir / "job-muxer.jpg").read_bytes() == b"thumbnail"
+    # Regression guard: the temp file carries a .tmp suffix, so ffmpeg must
+    # pin the muxer explicitly; otherwise it infers an unknown format from
+    # the extension and the extraction fails with "Invalid argument".
+    cmd = captured["cmd"]
+    assert "image2" in cmd and cmd[cmd.index("image2") - 1] == "-f"
+
+
 def test_publish_cover_cache_bytes_is_atomic_and_validates(tmp_path, monkeypatch):
     thumb_dir = _patch_thumbnail_dir(tmp_path, monkeypatch)
     cache = thumb_dir / "target.jpg"

@@ -1,3 +1,10 @@
+"""FastAPI 应用入口：配置、环境自检、任务 API、SSE 与静态资源路由总装。
+
+主进程运行在 127.0.0.1 回环端口，请求处理可进入后台工作线程；所有对外
+异常经 safe_external_error_message() 脱敏，同源与 Host 校验防止跨站写入。
+主要调用方为启动脚本与本机 Web UI。
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -24,7 +31,7 @@ from pydantic import BaseModel, Field, field_validator
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .browser import open_chrome
-from .build_info import APP_ID, APP_VERSION, BUILD_ID, calculate_build_id
+from .build_info import APP_ID, APP_VERSION, BUILD_ID, calculate_build_id, project_root_for
 from .downloader import DownloaderConfig, MediaDownloader
 from .desktop import open_folder_foreground, open_saved_file, saved_file_facts
 from .errors import SiteIssueCode
@@ -53,7 +60,7 @@ from .xiaohongshu import (
 )
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PROJECT_ROOT = project_root_for(Path(__file__).resolve().parent.parent)
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 DATA_DIR = PROJECT_ROOT / "data"
 CONFIG_PATH = DATA_DIR / "config.json"
@@ -525,9 +532,35 @@ def _cache_usage() -> tuple[int, int]:
     return files, total
 
 
+# 缓存统计需递归扫描整个 cache 目录；缓存大时是数秒级磁盘 IO。
+# /api/cache 由前端轮询展示，用短 TTL 缓存避免每次请求都全量重扫；
+# 显式清理缓存后立即失效，保证下一次读取反映清理后的真实状态。
+_CACHE_USAGE_TTL = 60.0
+_cache_usage_lock = threading.Lock()
+_cache_usage_snapshot: tuple[float, tuple[int, int]] | None = None
+
+
+def _cached_cache_usage() -> tuple[int, int]:
+    global _cache_usage_snapshot
+    now = time.monotonic()
+    with _cache_usage_lock:
+        if _cache_usage_snapshot is not None and now - _cache_usage_snapshot[0] < _CACHE_USAGE_TTL:
+            return _cache_usage_snapshot[1]
+    usage = _cache_usage()
+    with _cache_usage_lock:
+        _cache_usage_snapshot = (now, usage)
+    return usage
+
+
+def _invalidate_cache_usage() -> None:
+    global _cache_usage_snapshot
+    with _cache_usage_lock:
+        _cache_usage_snapshot = None
+
+
 @app.get("/api/cache")
 def cache_status() -> dict:
-    files, total = _cache_usage()
+    files, total = _cached_cache_usage()
     jobs = manager.list_jobs()
     busy = sum(1 for job in jobs if job.status in _CACHE_BUSY_STATUSES)
     paused = sum(
@@ -569,6 +602,8 @@ def clear_cache() -> dict:
                 shutil.rmtree(entry, ignore_errors=True)
         except OSError:
             continue
+    # 清理必须立刻反映在界面上：作废 TTL 快照后重扫一次。
+    _invalidate_cache_usage()
     return {"freed_bytes": freed, "files": _cache_usage()[0]}
 
 

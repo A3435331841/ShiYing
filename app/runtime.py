@@ -1,3 +1,10 @@
+"""运行时身份与单实例协调：Mutex 互斥锁、运行记录与端口复用。
+
+进程级身份由 configure_runtime_identity 设置并用锁保护，记录文件严格校验
+字段、拒绝符号链接；主进程启动时协调桌面壳与无头服务共用同一实例。异常
+与记录读取均为纯本地操作，不输出敏感路径以外的内容。
+"""
+
 from __future__ import annotations
 
 import hashlib

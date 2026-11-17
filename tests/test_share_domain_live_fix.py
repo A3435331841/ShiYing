@@ -61,8 +61,16 @@ def test_kuaishou_direct_mobile_link(host):
 
 def test_jingxuan_mobile_video_url():
     result = identify_url('https://jingxuan.douyin.com/m/video/7662178203703852011')
-    assert result.platform == Platform.DOUYIN
+    assert result.platform == Platform.SELECTED_DOUYIN
     assert result.url == 'https://www.douyin.com/video/7662178203703852011'
+
+
+def test_jingxuan_and_main_site_are_distinct_platforms():
+    selected = identify_url('https://jingxuan.douyin.com/video/7662178203703852011')
+    main = identify_url('https://www.douyin.com/video/7662178203703852011')
+    assert selected.platform == Platform.SELECTED_DOUYIN
+    assert main.platform == Platform.DOUYIN
+    assert selected.platform.value == 'selected-douyin'
 
 
 @pytest.mark.parametrize('host, kind', [

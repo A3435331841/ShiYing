@@ -1,3 +1,10 @@
+"""桌面启动器本地控制通道：单实例身份记录与带令牌的安全停机 HTTP 服务。
+
+控制服务监听回环地址并运行在独立 daemon 线程，Host 与 X-Original-Media-
+Stop-Token 均严格校验；记录文件原子写入并拒绝符号链接与重复字段。被
+launch_shiying.py / stop.py 用于入口互认，不暴露任何凭据内容。
+"""
+
 from __future__ import annotations
 
 import json

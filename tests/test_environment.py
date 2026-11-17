@@ -11,9 +11,22 @@ def test_environment_check_reports_actionable_missing_dependencies(monkeypatch):
     monkeypatch.setattr(environment, "_writable", lambda directory: False)
     monkeypatch.setattr(environment, "_package_version", lambda name: "1.0" if name == "yt-dlp" else None)
     checks = {check["id"]: check for check in environment.check_environment("D:/missing")["checks"]}
-    assert {name for name, check in checks.items() if not check["ok"]} == {"ffmpeg", "chrome", "download_dir", "playwright"}
+    assert {name for name, check in checks.items() if not check["ok"]} == {"ffmpeg", "chrome", "download_dir", "playwright", "deno"}
     assert "权限" in checks["download_dir"]["message"]
     assert checks["ffprobe"]["ok"]
+    assert "降级" in checks["deno"]["message"]
+
+
+def test_environment_check_reports_deno_runtime_when_installed(monkeypatch):
+    monkeypatch.setattr(environment.MediaDownloader, "_find_ffmpeg_executable", lambda: "ffmpeg")
+    monkeypatch.setattr(environment.MediaDownloader, "_find_ffprobe_executable", lambda: "ffprobe")
+    monkeypatch.setattr(environment, "_starts", lambda executable: True)
+    monkeypatch.setattr(environment, "_chrome_path", lambda: None)
+    monkeypatch.setattr(environment, "_writable", lambda directory: True)
+    monkeypatch.setattr(environment, "_package_version", lambda name: {"yt-dlp": "1.0", "playwright": "1.0", "deno": "2.9.8"}.get(name))
+    checks = {check["id"]: check for check in environment.check_environment("D:/tmp")["checks"]}
+    assert checks["deno"]["ok"] is True
+    assert "2.9.8" in checks["deno"]["message"]
 
 
 def test_environment_probe_reports_chrome_launch_failure(monkeypatch):

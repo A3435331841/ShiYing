@@ -6,6 +6,7 @@ class ShiyingTests(unittest.TestCase):
     def test_platforms(self):
         self.assertEqual(identify_url('分享 https://v.douyin.com/abc/').platform.value,'douyin')
         self.assertEqual(identify_url('https://jingxuan.douyin.com/video/12345').url,'https://www.douyin.com/video/12345')
+        self.assertEqual(identify_url('https://jingxuan.douyin.com/video/12345').platform.value,'selected-douyin')
         self.assertEqual(identify_url('https://v.kuaishou.com/abc').platform.value,'kuaishou')
         self.assertEqual(identify_url('https://xhslink.com/a/abc').platform.value,'xiaohongshu')
         self.assertEqual(identify_url('https://www.bilibili.com/video/BV1xx411c7mD').platform.value,'bilibili')

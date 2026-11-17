@@ -1,5 +1,13 @@
-"""Auto-split from the original task manager module."""
+"""任务调度核心：DownloadManager 的任务增删改查、并发槽位与状态持久化。
+
+主线程 API 与后台工作线程共同访问，内部状态由 RLock 保护，任务记录经
+JsonJobStore 原子刷盘；退出时统一 shutdown 回收线程。采用 Mixin 组合模式
+装配 lifecycle / issues / douyin_profile / xiaohongshu 等能力，并由
+app/task_manager.py 兼容门面保留旧导入通路。
+"""
 from __future__ import annotations
+
+from ..models import DOUYIN_PLATFORMS
 import re
 import threading
 import time
@@ -113,7 +121,9 @@ class DownloadManager(
         if self.organized_output:
             platforms = {Platform.DOUYIN: "抖音", Platform.KUAISHOU: "快手",
                          Platform.XIAOHONGSHU: "小红书", Platform.BILIBILI: "B站", Platform.WECHAT: "视频号",
-                         Platform.YOUTUBE: "YouTube"}
+                         Platform.YOUTUBE: "YouTube",
+                         # 精选与主站物理分治，独立一级目录，避免长视频混入短视频归档。
+                         Platform.SELECTED_DOUYIN: "Selected-Douyin"}
             author = job.author or next((i.author for i in job.items if i.author), None)
             root = Path(job.output_root) / platforms[job.platform] / safe_component(author, fallback="未知作者", limit=72)
             if item is None and len(job.items) != 1:
@@ -151,9 +161,9 @@ class DownloadManager(
                 normalized_source = None
             if (
                 not was_quarantined_douyin_profile_queue
-                and job.platform == Platform.DOUYIN
+                and job.platform in DOUYIN_PLATFORMS
                 and normalized_source
-                and normalized_source.platform == Platform.DOUYIN
+                and normalized_source.platform in DOUYIN_PLATFORMS
                 and normalized_source.kind == SourceKind.ITEM
             ):
                 normalized_media_id = MediaDownloader._douyin_video_id(
@@ -248,13 +258,13 @@ class DownloadManager(
                     job.discovery_complete = False
                     job.finished_at = now
             if (
-                job.platform == Platform.DOUYIN
+                job.platform in DOUYIN_PLATFORMS
                 and job.source_kind == SourceKind.PROFILE
             ):
                 for item in job.items:
                     changed |= self._refresh_douyin_profile_item_from_cache(job, item)
             legacy_media_redirect = self._has_legacy_douyin_media_redirect_error(job)
-            if legacy_media_redirect and job.platform == Platform.DOUYIN:
+            if legacy_media_redirect and job.platform in DOUYIN_PLATFORMS:
                 now = utc_now()
                 if job.source_kind == SourceKind.PROFILE:
                     self._migrate_legacy_douyin_redirect_profile(job, now)
@@ -292,13 +302,13 @@ class DownloadManager(
                     SourceKind.SHORT_LINK,
                 }
             elif (
-                job.platform == Platform.DOUYIN
+                job.platform in DOUYIN_PLATFORMS
                 and job.source_kind == SourceKind.PROFILE
             ):
                 changed |= self._mark_douyin_profile_redirect_refresh_required(job)
             legacy_signing_messages = (job.error or "", job.auth_message or "")
             if (
-                job.platform == Platform.DOUYIN
+                job.platform in DOUYIN_PLATFORMS
                 and job.status == JobStatus.NEEDS_AUTH
                 and any(
                     LEGACY_DOUYIN_GENERIC_SIGNING_MARKER in message
@@ -387,11 +397,11 @@ class DownloadManager(
                     job.finished_at = now
                     changed = True
             if (
-                job.platform == Platform.DOUYIN
+                job.platform in DOUYIN_PLATFORMS
                 and job.source_kind == SourceKind.ITEM
                 and (
                     normalized_source is None
-                    or normalized_source.platform != Platform.DOUYIN
+                    or normalized_source.platform not in DOUYIN_PLATFORMS
                     or normalized_source.kind != SourceKind.ITEM
                 )
             ):
@@ -472,7 +482,7 @@ class DownloadManager(
                 changed = True
             for item in job.items:
                 if (
-                    job.platform == Platform.DOUYIN
+                    job.platform in DOUYIN_PLATFORMS
                     and job.source_kind == SourceKind.PROFILE
                     and item.status == ItemStatus.COMPLETED
                     and not item.metadata.get("profile_owner_verified")
@@ -626,7 +636,7 @@ class DownloadManager(
                 rediscover = True
             elif (
                 (
-                    job.platform == Platform.DOUYIN
+                    job.platform in DOUYIN_PLATFORMS
                     and job.source_kind == SourceKind.PROFILE
                 )
                 or job.platform == Platform.KUAISHOU
@@ -1020,7 +1030,7 @@ class DownloadManager(
                         for xhs_item in [*previous_items, *result.items]:
                             self._normalize_xiaohongshu_item_identity(xhs_item)
                     if (
-                        job.platform == Platform.DOUYIN
+                        job.platform in DOUYIN_PLATFORMS
                         and job.source_kind == SourceKind.ITEM
                     ):
                         expected_id = MediaDownloader._douyin_video_id(job.source_url)
@@ -1061,7 +1071,7 @@ class DownloadManager(
                         previous_items,
                         result.items,
                         retire_missing_douyin_profile_items=(
-                            job.platform == Platform.DOUYIN
+                            job.platform in DOUYIN_PLATFORMS
                             and job.source_kind == SourceKind.PROFILE
                             and result.discovery_complete
                         ),
@@ -1077,7 +1087,7 @@ class DownloadManager(
                     job.output_dir = str(self.output_directory(job))
                     Path(job.output_dir).mkdir(parents=True, exist_ok=True)
                     if (
-                        job.platform == Platform.DOUYIN
+                        job.platform in DOUYIN_PLATFORMS
                         and job.source_kind == SourceKind.ITEM
                     ):
                         for item in job.items:
@@ -1183,12 +1193,12 @@ class DownloadManager(
                     )
                     platform = job.platform
                     if (
-                        platform == Platform.DOUYIN
+                        platform in DOUYIN_PLATFORMS
                         and job.source_kind == SourceKind.PROFILE
                     ):
                         item_snapshot.metadata["profile_url"] = job.source_url
                     elif (
-                        platform == Platform.DOUYIN
+                        platform in DOUYIN_PLATFORMS
                         and job.source_kind == SourceKind.ITEM
                     ):
                         bound, _ = self._bind_douyin_item_metadata(
@@ -1226,7 +1236,7 @@ class DownloadManager(
                             )
                             break
                         except DouyinMediaRefreshRequiredError:
-                            if automatic_refresh_used or platform != Platform.DOUYIN:
+                            if automatic_refresh_used or platform not in DOUYIN_PLATFORMS:
                                 raise
                             automatic_refresh_used = True
                             compact_names = item_snapshot.metadata.get("_compact_asset_names") is True
@@ -1249,7 +1259,7 @@ class DownloadManager(
                         item.selected_format = outcome.selected_format
                         item.resolution = outcome.resolution
                         if (
-                            job.platform == Platform.DOUYIN
+                            job.platform in DOUYIN_PLATFORMS
                             and job.source_kind == SourceKind.PROFILE
                         ):
                             item.metadata["profile_url"] = job.source_url
@@ -1299,7 +1309,7 @@ class DownloadManager(
                             )
                             item.retryable = True
                             if (
-                                job.platform == Platform.DOUYIN
+                                job.platform in DOUYIN_PLATFORMS
                                 and job.source_kind == SourceKind.PROFILE
                             ):
                                 item.metadata[
@@ -1406,7 +1416,7 @@ class DownloadManager(
                             item.issue_code not in NON_RETRYABLE_SITE_ISSUES
                         )
                         pause_queue = item.issue_code in QUEUE_PAUSE_SITE_ISSUES or (
-                            job.platform in {Platform.DOUYIN, Platform.KUAISHOU}
+                            job.platform in {*DOUYIN_PLATFORMS, Platform.KUAISHOU}
                             and item.issue_code == SiteIssueCode.SITE_RESPONSE_CHANGED
                         )
                         if (

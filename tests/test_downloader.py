@@ -10475,6 +10475,18 @@ def _xhs_quality_download_fixture(monkeypatch, assets, routes):
         "app.downloader.parse_xhs_note", lambda *args, **kwargs: (note, False)
     )
     monkeypatch.setattr("app.downloader.YoutubeDL", QualityYoutubeDL)
+    # R24 记录的 WIP：这些画质用例的断言只打在旧门面上。若门面的 setattr
+    # 镜像没有真正落到 app.engine.transfer，后续「请求了哪些候选 / 重试几轮」
+    # 的断言仍会全绿，却完全没有验证传输层。这里显式守护 mock 命中真实调用点。
+    from app.engine import MODULES
+
+    patched_modules = {
+        module.__name__
+        for module in MODULES
+        if getattr(module, "YoutubeDL", None) is QualityYoutubeDL
+    }
+    assert "app.engine.transfer" in patched_modules
+    assert "app.engine.platform_items" in patched_modules
     engine = MediaDownloader(DownloaderConfig(cookie_browser=None))
     monkeypatch.setattr(engine, "_find_ffprobe_executable", lambda: "/fake/ffprobe")
     monkeypatch.setattr(engine, "_run_ffprobe", ffprobe_output)

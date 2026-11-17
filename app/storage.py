@@ -1,3 +1,10 @@
+"""任务状态持久化：JsonJobStore 的原子替换、目录 fsync 与损坏隔离。
+
+每条任务独立成文件，写入经临时文件 + 原子 rename + 目录 fsync，读取失败
+时收集 warning 而不静默丢弃；可被主进程与后台工作线程并发调用，替换重试
+处理 Windows 文件占用。主要调用方为 DownloadManager。
+"""
+
 from __future__ import annotations
 
 import json

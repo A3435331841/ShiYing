@@ -1,3 +1,9 @@
+"""SSE 事件缓冲：把任务进度与状态变更安全推送到前端订阅者。
+
+订阅者列表由锁保护，运行于 FastAPI 事件循环与后台工作线程交界处；只传递
+已脱敏的状态摘要，不携带播放地址或凭据。主要调用方为 app/main.py 的 /api/events。
+"""
+
 from __future__ import annotations
 
 import asyncio

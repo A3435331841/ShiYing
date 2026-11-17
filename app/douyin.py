@@ -1,3 +1,10 @@
+"""抖音主站解析与会话：SSR 页面识别、作品身份绑定与风控页分类。
+
+由 app/platforms 识别后的链接驱动，运行于后台工作线程；所有页面 URL 与
+媒体地址经过受信域名校验，异常映射为固定诊断码。被 engine 与 manager 的
+抖音系模块复用。
+"""
+
 from __future__ import annotations
 
 import contextlib

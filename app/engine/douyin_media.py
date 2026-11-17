@@ -1,5 +1,12 @@
-"""Auto-split from the original downloader module."""
+"""抖音媒体下载混入：图文、实况照片与主页媒体的候选选择与落盘。
+
+负责静态原图与动态 MP4 同 stem 成对、候选画质下限与失败诊断，运行于下载
+工作线程；共享的临时目录由调用方按任务隔离。由 MediaDownloader 以 Mixin
+方式组合，异常统一经 safe_external_error_message() 脱敏后对外抛出。
+"""
 from __future__ import annotations
+
+from ..models import DOUYIN_PLATFORMS
 import contextlib
 import hashlib
 import http.client
@@ -1442,11 +1449,11 @@ class DouyinMediaMixin:
             or not profile_id
             or not media_id
             or profile_source is None
-            or profile_source.platform != Platform.DOUYIN
+            or profile_source.platform not in DOUYIN_PLATFORMS
             or profile_source.kind != SourceKind.PROFILE
             or profile_source.url != profile_url
             or item_source is None
-            or item_source.platform != Platform.DOUYIN
+            or item_source.platform not in DOUYIN_PLATFORMS
             or item_source.kind != SourceKind.ITEM
             or item_source.url != canonical_item_url
             or item.source_url != canonical_item_url

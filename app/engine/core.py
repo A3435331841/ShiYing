@@ -9,6 +9,8 @@
 6. DouyinMediaMixin：图文流与 Live Photo 静态/动态成对配准解包。
 """
 from __future__ import annotations
+
+from ..models import DOUYIN_PLATFORMS
 import contextlib
 import hashlib
 import http.client
@@ -150,7 +152,7 @@ class MediaDownloader(
                 callback=callback,
                 should_cancel=should_cancel,
             )
-        if platform == Platform.DOUYIN:
+        if platform in DOUYIN_PLATFORMS:
             with self._douyin_probe_reuse_scope(output_path):
                 if (
                     (

@@ -1,3 +1,9 @@
+"""本机 Chrome 会话辅助：UA、用户数据目录定位与 Cookie 读取诊断。
+
+只读探测浏览器 Profile，不打印或持久化任何 Cookie 明文；被平台解析模块与
+环境自检调用，可在工作线程内使用。诊断结果仅返回固定分类码与安全文案。
+"""
+
 from __future__ import annotations
 
 import errno

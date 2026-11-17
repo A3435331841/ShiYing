@@ -1,3 +1,13 @@
+"""拾影核心领域模型：平台枚举、任务状态、下载条目与结果值对象。
+
+本模块被 API 层、任务调度层、下载引擎与持久化层共同依赖，只定义数据结构
+与不依赖外部状态的纯函数，不执行 I/O、不持有锁，因此可被多线程工作池安全
+共享。所有实体基于 pydantic BaseModel，序列化为 JSON 后落盘到 data/state/。
+
+主要调用方：app/main.py（请求/响应模型）、app/manager/（任务状态机）、
+app/engine/（下载条目与结果）、app/storage.py（持久化读写）。
+"""
+
 from __future__ import annotations
 
 from datetime import datetime, timezone
@@ -17,10 +27,21 @@ def utc_now() -> datetime:
 class Platform(str, Enum):
     XIAOHONGSHU = "xiaohongshu"
     DOUYIN = "douyin"
+    # 抖音精选与主站是物理分治的两个平台：枚举、URL 识别与落盘目录均独立。
+    # 值采用 kebab-case，与前端 home.js / task-views.js 的平台字典键一致。
+    SELECTED_DOUYIN = "selected-douyin"
     KUAISHOU = "kuaishou"
     BILIBILI = "bilibili"
     YOUTUBE = "youtube"
     WECHAT = "wechat"
+
+
+# 抖音系共用同一套作品身份绑定、签名与画质探测实现。分治后精选不能再被写成
+# DOUYIN，但引擎与调度层原有的「是否抖音系」判断必须同时覆盖两者，否则精选
+# 任务会静默失去 anti-串号、签名失败诊断与最高画质下限等关键保护。
+DOUYIN_PLATFORMS: frozenset[Platform] = frozenset(
+    {Platform.DOUYIN, Platform.SELECTED_DOUYIN}
+)
 
 
 class SourceKind(str, Enum):

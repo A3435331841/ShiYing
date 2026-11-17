@@ -19,6 +19,7 @@ import requests
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from .build_info import project_root_for
 from .platforms import extract_url
 from .downloader import safe_component
 from .file_publish import publish_no_replace
@@ -102,7 +103,7 @@ def load_yuanbao_cookie() -> str:
     return _chrome_yuanbao_cookie()
 
 router = APIRouter(prefix='/api/wechat')
-ROOT = Path(__file__).resolve().parent.parent
+ROOT = project_root_for(Path(__file__).resolve().parent.parent)
 STATE = ROOT / 'data' / 'wechat-jobs.json'
 SECRET = ROOT / 'data' / 'yuanbao-cookie.txt'
 LOCK = threading.RLock()
@@ -377,7 +378,15 @@ def download(job, output):
             path = folder / f'{date}-{stem} [{identity}].mp4'
             if path.exists():
                 raise WeChatUserError('目标文件已存在，请检查已有文件，避免覆盖。')
-            staging = folder / f".{job['id']}.checking.mp4"
+            # 暂存名按「任务 + 作品身份」双因子构造，与主引擎
+            # app/engine/platform_items.py 的约定保持一致。只用 job id 虽然在该
+            # 队列内唯一，但历史审查 F05 指出：当同一作品以不同路径重试、或旧
+            # 队列与主队列并存时，单因子命名无法从文件名本身判断归属，清理与
+            # 失败恢复都容易误删/误复用。补上 work_id 后并发写与残留回收都可
+            # 依据文件名隔离，不改变已发布文件的命名规则。
+            job_scope = safe_component(str(job['id']), fallback='job', limit=32)
+            item_scope = safe_component(work_id, fallback='item', limit=64)
+            staging = folder / f".{job_scope}-{item_scope}.checking.mp4"
             change(job, title=feed.get('description') or '视频号视频', author=author, output_dir=str(folder))
 
             def on_progress(downloaded, total):

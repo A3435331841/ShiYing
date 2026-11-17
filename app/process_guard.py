@@ -1,3 +1,9 @@
+"""子进程守护：Win32 作业对象与 POSIX 进程组的级联销毁。
+
+用于启动器退出时回收整棵进程树，避免遗留后台孤儿；信号与进程组操作仅在
+对应平台生效，运行于启动器主进程。主要调用方为 launcher.py 与 run.py。
+"""
+
 from __future__ import annotations
 
 import argparse

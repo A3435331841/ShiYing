@@ -1,4 +1,9 @@
-"""Auto-split from the original downloader module."""
+"""平台条目下载混入：小红书、快手、B站图文等平台特化条目的下载编排。
+
+把各平台解析出的 RemoteAsset 交给统一传输层，并负责实况配对、图集排号与
+媒体校验，运行于下载工作线程；不持有全局可变状态。由 MediaDownloader 以
+Mixin 方式组合，是 SPI 分包迁移前平台逻辑的集中承载处。
+"""
 from __future__ import annotations
 import contextlib
 import hashlib

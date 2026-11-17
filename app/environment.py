@@ -107,6 +107,10 @@ def check_environment(download_dir: str) -> dict:
     writable = _writable(download_dir)
     yt_dlp = _package_version("yt-dlp")
     playwright = _package_version("playwright")
+    # YouTube 的 n-sig 挑战由 yt-dlp 交给 Deno 沙箱执行；缺失时只能降级到
+    # 基础格式，因此必须像 FFmpeg/Chrome 一样在环境自检中显式暴露，
+    # 不能等用户下载 4K 失败后才发现。
+    deno = _package_version("deno")
     checks = [
         {"id": "ffmpeg", "ok": ffmpeg, "message": "FFmpeg 可用" if ffmpeg else "FFmpeg 不可用：请安装 FFmpeg 并重启拾影，音视频合并和图片校验需要它。"},
         {"id": "ffprobe", "ok": ffprobe, "message": "FFprobe 可用" if ffprobe else "FFprobe 不可用：请安装包含 FFprobe 的 FFmpeg 并重启拾影，画质和视频校验需要它。"},
@@ -114,6 +118,7 @@ def check_environment(download_dir: str) -> dict:
         {"id": "download_dir", "ok": writable, "message": "保存目录可写" if writable else "保存目录不可写：请检查磁盘空间和权限，或在设置中选择其他目录。"},
         {"id": "yt_dlp", "ok": bool(yt_dlp), "message": f"yt-dlp {yt_dlp}" if yt_dlp else "缺少 yt-dlp：请重新运行依赖安装程序。"},
         {"id": "playwright", "ok": bool(playwright), "message": f"Playwright {playwright}" if playwright else "缺少 Playwright：请重新运行依赖安装程序。"},
+        {"id": "deno", "ok": bool(deno), "message": f"Deno {deno} 可用" if deno else "缺少 Deno：YouTube 高清流的 JS 签名挑战无法解密，将降级到基础格式；请重新运行依赖安装程序。"},
     ]
     if chrome_path:
         # 找到二进制后进一步验证能真实启动；结果短 TTL 缓存，避免每次

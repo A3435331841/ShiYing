@@ -1,6 +1,12 @@
+"""快手平台解析：短链与作品身份识别、可信域名校验与 CDP 响应解析。
+
+基于 Playwright 被动监听真实网络响应，运行于后台工作线程；所有媒体主机与
+跳转经过逐跳白名单校验，拒绝回环与私网目标。被 engine/platform_items 与
+manager 的发现链路调用。
+"""
+
 # ChengYing integration; not part of the original upstream snapshot.
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Observe Kuaishou's normal browser responses without replaying signed APIs."""
 
 from __future__ import annotations
 

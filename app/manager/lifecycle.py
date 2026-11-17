@@ -1,5 +1,12 @@
-"""Auto-split from the original task manager module."""
+"""生命周期混入：任务状态机、暂停/继续/取消/重试与 SSE 进度事件。
+
+由主线程 API 触发、后台工作线程执行，状态迁移统一在 DownloadManager 的
+RLock 下完成；暂停与取消是不同意图，恢复目标只含本次中断的当前项。以
+Mixin 方式装配进 DownloadManager，事件经 JobEventBuffer 推送前端。
+"""
 from __future__ import annotations
+
+from ..models import DOUYIN_PLATFORMS
 import re
 import threading
 import time
@@ -140,7 +147,7 @@ class LifecycleMixin:
             now = time.monotonic()
             progress_save_interval = (
                 5.0
-                if job.platform == Platform.DOUYIN
+                if job.platform in DOUYIN_PLATFORMS
                 and job.source_kind == SourceKind.PROFILE
                 and len(job.items) >= 100
                 else 0.5

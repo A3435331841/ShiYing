@@ -1,3 +1,13 @@
+"""启动器本地控制通道（LauncherControl）的离线回归测试。
+
+本模块覆盖运行记录原子写入、单实例身份校验、回环 Host 与停机令牌边界、
+以及停机请求的语义；所有请求只打到进程内启动的临时控制服务，不访问外网，
+也不读写用户真实运行态。测试用例运行于 pytest 主进程，控制服务为独立
+daemon 线程，因此每个用例都在 finally 中显式 close() 回收端口与线程。
+
+主要调用方：CI 中的 pytest 全量套件与本地发布前回归。
+"""
+
 from __future__ import annotations
 
 import http.client
@@ -7,7 +17,7 @@ import threading
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.error import HTTPError
-from urllib.request import Request, urlopen
+from urllib.request import ProxyHandler, Request, build_opener
 
 import pytest
 
@@ -28,6 +38,12 @@ from app.runtime import STOP_TOKEN_HEADER
 
 INSTANCE_ID = "a" * 32
 STOP_TOKEN = "safe_launcher_stop_token_" + "b" * 32
+
+# 控制通道固定监听回环地址。开发机若设置了 HTTP_PROXY，默认 opener 会把
+# 127.0.0.1 的请求转交代理；代理对携带非 ASCII 头的请求可能直接断开连接，
+# 使「非 ASCII 令牌应返回 403」的用例误报成产品缺陷。这里强制直连，
+# 保证断言只反映 LauncherControl 自身行为，不受本机代理配置影响。
+_DIRECT_OPENER = build_opener(ProxyHandler({}))
 
 
 def launcher_record(tmp_path: Path, **changes) -> LauncherRecord:
@@ -69,6 +85,20 @@ def request_json(
     method: str = "GET",
     headers: dict[str, str] | None = None,
 ) -> tuple[int, dict]:
+    """向进程内控制服务发送一次 JSON 请求并返回状态码与响应体。
+
+    Args:
+        port: 控制服务监听的回环端口。
+        path: 请求路径，如 ``/health`` 或 ``/stop``。
+        method: HTTP 方法，默认 GET。
+        headers: 附加请求头，用于注入停机令牌等边界用例。
+
+    Returns:
+        (status_code, payload) 二元组；4xx 响应同样解析为普通返回值。
+
+    Raises:
+        URLError: 控制服务未启动或连接被提前关闭时抛出，用于暴露真实故障。
+    """
     request = Request(
         f"http://{CONTROL_HOST}:{port}{path}",
         data=b"" if method == "POST" else None,
@@ -76,7 +106,7 @@ def request_json(
         method=method,
     )
     try:
-        with urlopen(request, timeout=2.0) as response:
+        with _DIRECT_OPENER.open(request, timeout=2.0) as response:
             return response.status, json.loads(response.read().decode("utf-8"))
     except HTTPError as exc:
         payload = exc.read()

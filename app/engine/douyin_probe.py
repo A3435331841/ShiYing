@@ -1,4 +1,9 @@
-"""Auto-split from the original downloader module."""
+"""抖音作品探测混入：双源探测、签名会话、画质候选实测与作品身份绑定。
+
+针对抖音 a_bogus 签名、SSR 串号与风控页做逐层校验，运行于下载工作线程；
+探测结果按输出目录作用域复用，避免同一任务内重复请求。由 MediaDownloader
+以 Mixin 方式组合，是抖音系（主站与精选）共用的逆向边界。
+"""
 from __future__ import annotations
 import contextlib
 import hashlib

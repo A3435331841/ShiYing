@@ -1,4 +1,8 @@
-"""Auto-split from the original task manager module."""
+"""小红书混入：主页滚动发现、短链归属校验与过期签名处理。
+
+运行于后台工作线程，浏览器会话按任务创建并在 finally 中回收；复用
+DownloadManager 的锁与持久化。以 Mixin 方式装配进 DownloadManager。
+"""
 from __future__ import annotations
 import re
 import threading

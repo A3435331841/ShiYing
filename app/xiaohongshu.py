@@ -1,3 +1,10 @@
+"""小红书平台解析：笔记详情、图文/视频/实况资产、短链归属与风控识别。
+
+运行于后台工作线程，优先 direct CDN 与 originVideoKey 原流；作品 ID 强绑定、
+重定向逐跳白名单校验，异常映射为固定诊断码。被 engine/platform_items 与
+manager/xiaohongshu 复用。
+"""
+
 from __future__ import annotations
 
 import contextlib

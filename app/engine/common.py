@@ -375,6 +375,10 @@ KUAISHOU_SAVED_ASSETS_KEY = "kuaishou_saved_assets"
 
 KUAISHOU_OUTPUT_FOLDER = "Kuaishou"
 
+# 抖音精选独立落盘一级目录。与 organized 模式下的 manager.core.output_directory
+# 保持一致，确保两种输出模式都不会把精选长视频混进主站「抖音」目录。
+SELECTED_DOUYIN_OUTPUT_FOLDER = "Selected-Douyin"
+
 
 DOUYIN_MEDIA_HEADERS = {
     "User-Agent": (
@@ -650,13 +654,19 @@ def platform_output_directory(
 ) -> Path:
     """Compute the real per-platform, per-author output directory.
 
-    Kuaishou work is stored in its own ``Kuaishou`` folder so it never mixes with
-    another platform's output; every other platform keeps its original layout. The
-    author segment is sanitized so a crafted author name cannot escape the folder.
+    Kuaishou and Selected Douyin each keep their own top-level folder so their
+    output never mixes with another platform's files; every other platform keeps
+    its original layout. The author segment is sanitized so a crafted author name
+    cannot escape the folder.
     """
     root = Path(output_root).expanduser()
     author_folder = safe_component(author, fallback=f"{platform.value}-author")
-    base = root / KUAISHOU_OUTPUT_FOLDER if platform == Platform.KUAISHOU else root
+    if platform == Platform.KUAISHOU:
+        base = root / KUAISHOU_OUTPUT_FOLDER
+    elif platform == Platform.SELECTED_DOUYIN:
+        base = root / SELECTED_DOUYIN_OUTPUT_FOLDER
+    else:
+        base = root
     return base / author_folder
 
 

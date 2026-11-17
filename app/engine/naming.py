@@ -7,6 +7,8 @@
 3. 多平台归档规范：统一生成 "{YYYY-MM-DD}-{Title} [{ID}].{ext}" 或合集紧凑序号 "{Index:03d}.{ext}" 标准路径。
 """
 from __future__ import annotations
+
+from ..models import DOUYIN_PLATFORMS
 import contextlib
 import hashlib
 import http.client
@@ -254,7 +256,7 @@ class NamingMixin:
             return f"https://www.youtube.com/watch?v={media_id}"
         if platform == Platform.BILIBILI and media_id:
             return f"https://www.bilibili.com/video/{media_id}"
-        if platform == Platform.DOUYIN and media_id.isdigit():
+        if platform in DOUYIN_PLATFORMS and media_id.isdigit():
             return f"https://www.douyin.com/video/{media_id}"
         if media_id and len(media_id) > 5:
             return media_id

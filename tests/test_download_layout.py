@@ -1,3 +1,10 @@
+"""下载产物落盘布局的回归测试。
+
+覆盖 organized 与非 organized 两种输出模式下的平台目录、作者目录、
+任务目录以真实文件父目录为准等规则；所有路径均位于 pytest 临时目录，
+不触碰用户真实 downloads/。用例运行在 pytest 主进程，管理器用例显式 shutdown。
+"""
+
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -6,8 +13,30 @@ from fastapi.testclient import TestClient
 
 from app import main
 from app.downloader import DiscoveryResult, DownloadOutcome, DownloaderConfig
-from app.models import DownloadItem, MediaType
+from app.engine.common import platform_output_directory
+from app.models import DownloadItem, MediaType, Platform
 from app.task_manager import DownloadManager
+
+
+def test_selected_douyin_keeps_an_independent_output_directory(tmp_path):
+    """精选在两种输出模式下都必须落到独立一级目录，不得并入主站「抖音」。"""
+    root = tmp_path / 'downloads'
+    job = SimpleNamespace(
+        output_root=str(root), platform=Platform.SELECTED_DOUYIN,
+        author='精选作者', items=[],
+    )
+    manager = DownloadManager.__new__(DownloadManager)
+    manager.organized_output = True
+    assert manager.output_directory(job) == root / 'Selected-Douyin' / '精选作者'
+    assert platform_output_directory(
+        Platform.SELECTED_DOUYIN, root, '精选作者'
+    ) == root / 'Selected-Douyin' / '精选作者'
+
+    main_job = SimpleNamespace(
+        output_root=str(root), platform=Platform.DOUYIN,
+        author='主站作者', items=[],
+    )
+    assert manager.output_directory(main_job) == root / '抖音' / '主站作者'
 
 
 @pytest.mark.parametrize('images, count', [(False, 1), (True, 1), (True, 2)])

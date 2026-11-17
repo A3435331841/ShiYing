@@ -1,5 +1,12 @@
-"""Auto-split from the original downloader module."""
+"""作品发现混入：把单作品、多 P、合集与作者主页展开为标准 DownloadItem 集合。
+
+由 yt-dlp 与小红书/快手/B站等平台解析器共同驱动，运行于 DownloadManager 的
+后台工作线程；不持有跨线程可变状态，取消通过 should_cancel 回调传入。采用
+Mixin 组合模式，由 MediaDownloader 统一继承，避免核心调度器感知平台细节。
+"""
 from __future__ import annotations
+
+from ..models import DOUYIN_PLATFORMS
 import contextlib
 import hashlib
 import http.client
@@ -227,7 +234,7 @@ class DiscoveryMixin:
                 discovery_complete=profile.discovery_complete,
             )
 
-        if platform == Platform.DOUYIN and kind == SourceKind.PROFILE:
+        if platform in DOUYIN_PLATFORMS and kind == SourceKind.PROFILE:
             profile = discover_douyin_profile(
                 url,
                 cookie_profile=self.config.cookie_profile,
@@ -336,7 +343,7 @@ class DiscoveryMixin:
                 discovery_complete=profile.discovery_complete,
             )
 
-        if platform == Platform.DOUYIN and kind == SourceKind.ITEM:
+        if platform in DOUYIN_PLATFORMS and kind == SourceKind.ITEM:
             return self._discover_douyin_item(url, should_cancel)
 
         if platform == Platform.XIAOHONGSHU and kind in {
@@ -479,7 +486,7 @@ class DiscoveryMixin:
                 result = ydl.extract_info(url, download=False)
                 if not isinstance(result, dict):
                     raise DownloadError("The URL returned no downloadable media")
-                if platform == Platform.DOUYIN:
+                if platform in DOUYIN_PLATFORMS:
                     expected_id = self._douyin_video_id(url)
                     if not expected_id:
                         raise DownloadError("The Douyin URL has no video identifier")
@@ -537,7 +544,7 @@ class DiscoveryMixin:
                 raise DownloadCancelledError("Task cancelled")
             media_id = str(entry.get("id") or "").strip() or None
             entry_url = self._entry_url(entry, platform, original_url=url)
-            entry_meta = {"verification_url": url} if platform == Platform.DOUYIN else {}
+            entry_meta = {"verification_url": url} if platform in DOUYIN_PLATFORMS else {}
             thumb_url = entry.get("thumbnail")
             if thumb_url and isinstance(thumb_url, str):
                 entry_meta["cover_url"] = thumb_url
@@ -564,6 +571,6 @@ class DiscoveryMixin:
     @staticmethod
     def _download_format_options(platform: Platform) -> dict[str, Any]:
         options: dict[str, Any] = {"format": "bestvideo*+bestaudio/best"}
-        if platform == Platform.DOUYIN:
+        if platform in DOUYIN_PLATFORMS:
             options["format_sort"] = ["res"]
         return options

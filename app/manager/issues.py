@@ -1,4 +1,9 @@
-"""Auto-split from the original task manager module."""
+"""问题诊断混入：把平台异常映射为固定 SiteIssueCode 与可行动的用户文案。
+
+纯函数式分类与脱敏，不持有可变状态，可由主线程与工作线程并发调用；所有
+对外文本强制经过 safe_external_error_message()，严禁回显 Cookie 或签名地址。
+以 Mixin 方式装配进 DownloadManager。
+"""
 from __future__ import annotations
 import re
 import threading

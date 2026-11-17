@@ -1,5 +1,12 @@
-"""Auto-split from the original downloader module."""
+"""传输混入：HTTP Range 断点续传、分块写入、网络重试与原子发布。
+
+负责无 Content-Length 流的进度与取消、实况同名配对的独占锁、以及调用
+file_publish 做全字节比对去重与不覆盖落盘，运行于下载工作线程；所有临时
+路径按任务隔离。由 MediaDownloader 以 Mixin 方式组合，异常经脱敏后上抛。
+"""
 from __future__ import annotations
+
+from ..models import DOUYIN_PLATFORMS
 import contextlib
 import hashlib
 import http.client
@@ -251,7 +258,7 @@ class TransferMixin:
         )
         expected_douyin_id: str | None = None
         expected_douyin_profile_id: str | None = None
-        if platform == Platform.DOUYIN:
+        if platform in DOUYIN_PLATFORMS:
             expected_douyin_profile_id = self._douyin_profile_id(
                 str(item.metadata.get("profile_url") or "")
             )
@@ -352,7 +359,7 @@ class TransferMixin:
                 },
                 "outtmpl": {"default": OUTPUT_TEMPLATE},
                 "windowsfilenames": True,
-                "continuedl": platform != Platform.DOUYIN,
+                "continuedl": platform not in DOUYIN_PLATFORMS,
                 "overwrites": True,
                 "ignoreerrors": False,
                 "noplaylist": True,
@@ -542,7 +549,7 @@ class TransferMixin:
                 operation_succeeded = True
             except AuthenticationRequiredError as exc:
                 if (
-                    platform == Platform.DOUYIN
+                    platform in DOUYIN_PLATFORMS
                     and exc.verification_url != verification_url
                 ):
                     raise AuthenticationRequiredError(
@@ -556,7 +563,7 @@ class TransferMixin:
                 self._cleanup_ytdlp_parts_dir(
                     parts_dir,
                     output_dir,
-                    remove_contents=(platform == Platform.DOUYIN or operation_succeeded),
+                    remove_contents=(platform in DOUYIN_PLATFORMS or operation_succeeded),
                     temporary_root=temporary_root,
                 )
             finally:
@@ -699,7 +706,7 @@ class TransferMixin:
         douyin_refresh_errors: list[DouyinMediaRefreshRequiredError] = []
         transfer_transient_errors: list[str] = []
         is_xiaohongshu_source = platform == Platform.XIAOHONGSHU
-        is_douyin_source = platform == Platform.DOUYIN
+        is_douyin_source = platform in DOUYIN_PLATFORMS
         is_kuaishou_source = platform == Platform.KUAISHOU
         is_bilibili_source = platform == Platform.BILIBILI
         transfer_budget = _douyin_transfer_budget

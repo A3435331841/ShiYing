@@ -1,3 +1,9 @@
+"""拾影应用包：保留历史导入路径的轻量级延迟解析门面。
+
+模块级 __getattr__ 把旧版 app.* 符号透明转发到重构后的子模块，避免包导入
+阶段拉起 FastAPI 与下载引擎。无可变全局状态，可被主进程与工作线程安全导入。
+"""
+
 from __future__ import annotations
 
 from importlib import import_module

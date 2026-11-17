@@ -1,5 +1,12 @@
-"""Auto-split from the original task manager module."""
+"""抖音主页混入：作者主页分页发现、作品身份二次绑定与签名失败诊断。
+
+处理 modal_id 冲突、awemeId 绑定与主页防串号，运行于后台工作线程；状态读写
+复用 DownloadManager 的锁与持久化。以 Mixin 方式装配进 DownloadManager，
+不单独持有任务队列。
+"""
 from __future__ import annotations
+
+from ..models import DOUYIN_PLATFORMS
 import re
 import threading
 import time
@@ -94,7 +101,7 @@ class DouyinProfileMixin:
         )
         job_snapshot = self.get_job(job_id)
         if (
-            job_snapshot.platform != Platform.DOUYIN
+            job_snapshot.platform not in DOUYIN_PLATFORMS
             or job_snapshot.source_kind not in {SourceKind.PROFILE, SourceKind.ITEM}
         ):
             raise DouyinMediaRefreshRequiredError(
@@ -529,8 +536,8 @@ class DouyinProfileMixin:
         except (TypeError, ValueError):
             return None
         if (
-            label_source.platform != Platform.DOUYIN
-            or target_source.platform != Platform.DOUYIN
+            label_source.platform not in DOUYIN_PLATFORMS
+            or target_source.platform not in DOUYIN_PLATFORMS
             or label_source.kind != SourceKind.ITEM
             or target_source.kind != SourceKind.ITEM
             or label_source.url != target_source.url
@@ -539,20 +546,20 @@ class DouyinProfileMixin:
         return target_source.url
     @staticmethod
     def _douyin_item_target(job: DownloadJob) -> tuple[str, str] | None:
-        if job.platform != Platform.DOUYIN:
+        if job.platform not in DOUYIN_PLATFORMS:
             return None
         try:
             source = identify_url(job.source_url)
         except (TypeError, ValueError):
             return None
-        if source.platform != Platform.DOUYIN or source.kind != SourceKind.ITEM:
+        if source.platform not in DOUYIN_PLATFORMS or source.kind != SourceKind.ITEM:
             return None
         media_id = MediaDownloader._douyin_video_id(source.url)
         return (source.url, media_id) if media_id else None
     def _prepare_douyin_item_rediscovery_locked(self, job: DownloadJob) -> bool:
         target = self._douyin_item_target(job)
         if not target:
-            if job.platform == Platform.DOUYIN and job.source_kind == SourceKind.ITEM:
+            if job.platform in DOUYIN_PLATFORMS and job.source_kind == SourceKind.ITEM:
                 raise ItemNotRetryableError(DOUYIN_ITEM_SOURCE_ERROR)
             return False
         canonical_url, expected_id = target
@@ -728,7 +735,7 @@ class DouyinProfileMixin:
         if job.retryable is False and job.error == DOUYIN_UNVERIFIABLE_QUEUE_ERROR:
             return False
         if (
-            job.platform != Platform.DOUYIN
+            job.platform not in DOUYIN_PLATFORMS
             or job.source_kind != SourceKind.PROFILE
             or len(job.items) < 2
         ):
@@ -745,7 +752,7 @@ class DouyinProfileMixin:
     @staticmethod
     def _is_quarantined_legacy_douyin_profile_queue(job: DownloadJob) -> bool:
         return (
-            job.platform == Platform.DOUYIN
+            job.platform in DOUYIN_PLATFORMS
             and job.source_kind == SourceKind.PROFILE
             and job.retryable is False
             and job.error == DOUYIN_UNVERIFIABLE_QUEUE_ERROR
@@ -753,7 +760,7 @@ class DouyinProfileMixin:
         )
     @staticmethod
     def _recoverable_douyin_profile_source(job: DownloadJob) -> str | None:
-        if job.platform != Platform.DOUYIN or job.source_kind != SourceKind.PROFILE:
+        if job.platform not in DOUYIN_PLATFORMS or job.source_kind != SourceKind.PROFILE:
             return None
         try:
             parsed = urlsplit(job.source_url.strip())
@@ -782,7 +789,7 @@ class DouyinProfileMixin:
         job: DownloadJob,
         item: DownloadItem,
     ) -> bool:
-        if job.platform != Platform.DOUYIN or job.source_kind != SourceKind.PROFILE:
+        if job.platform not in DOUYIN_PLATFORMS or job.source_kind != SourceKind.PROFILE:
             return False
         owner_id = MediaDownloader._douyin_profile_id(job.source_url)
         media_id = str(item.media_id or "").strip()
@@ -794,7 +801,7 @@ class DouyinProfileMixin:
         except (TypeError, ValueError):
             return False
         if (
-            source.platform != Platform.DOUYIN
+            source.platform not in DOUYIN_PLATFORMS
             or source.kind != SourceKind.ITEM
             or source.url != canonical_url
             or item.source_url != canonical_url
@@ -853,7 +860,7 @@ class DouyinProfileMixin:
         if cls._is_unverifiable_legacy_douyin_queue(job):
             return False
         if (
-            job.platform != Platform.DOUYIN
+            job.platform not in DOUYIN_PLATFORMS
             or job.source_kind != SourceKind.PROFILE
             or not job.items
         ):
@@ -1000,7 +1007,7 @@ class DouyinProfileMixin:
                 seen_media_ids.add(media_id.lower())
             return
 
-        if job.platform == Platform.DOUYIN and job.source_kind == SourceKind.PROFILE:
+        if job.platform in DOUYIN_PLATFORMS and job.source_kind == SourceKind.PROFILE:
             has_retryable_unfinished_item = any(
                 item.retryable
                 and item.status not in {ItemStatus.COMPLETED, ItemStatus.SKIPPED}
@@ -1178,7 +1185,7 @@ class DouyinProfileMixin:
         except (TypeError, ValueError):
             return False
         return (
-            source.platform == Platform.DOUYIN
+            source.platform in DOUYIN_PLATFORMS
             and source.kind == SourceKind.ITEM
             and source.url == canonical_url
             and MediaDownloader._douyin_video_id(source.url) == expected_id
@@ -1239,7 +1246,7 @@ class DouyinProfileMixin:
                 item.retryable and item.status in RETRYABLE_ITEM_STATUSES
                 for item in job.items
             )
-        if job.platform == Platform.DOUYIN and job.source_kind == SourceKind.ITEM:
+        if job.platform in DOUYIN_PLATFORMS and job.source_kind == SourceKind.ITEM:
             return job.status in {
                 JobStatus.FAILED,
                 JobStatus.NEEDS_AUTH,
@@ -1252,7 +1259,7 @@ class DouyinProfileMixin:
             )
         return (
             job.source_kind == SourceKind.PROFILE
-            and job.platform in {Platform.XIAOHONGSHU, Platform.DOUYIN}
+            and job.platform in {Platform.XIAOHONGSHU, *DOUYIN_PLATFORMS}
             and (
                 job.status in {JobStatus.NEEDS_AUTH, JobStatus.INTERRUPTED}
                 or any(item.status == ItemStatus.NEEDS_AUTH for item in job.items)
@@ -1266,7 +1273,7 @@ class DouyinProfileMixin:
     @staticmethod
     def _has_douyin_profile_rediscovery_pending(job: DownloadJob) -> bool:
         return (
-            job.platform == Platform.DOUYIN
+            job.platform in DOUYIN_PLATFORMS
             and job.source_kind == SourceKind.PROFILE
             and any(
                 item.metadata.get(DOUYIN_PROFILE_REDISCOVERY_ITEM_MARKER) is True
@@ -1276,7 +1283,7 @@ class DouyinProfileMixin:
     @staticmethod
     def _has_douyin_profile_refresh_required(job: DownloadJob) -> bool:
         return (
-            job.platform == Platform.DOUYIN
+            job.platform in DOUYIN_PLATFORMS
             and job.source_kind == SourceKind.PROFILE
             and any(
                 item.metadata.get(DOUYIN_PROFILE_REFRESH_REQUIRED_MARKER) is True

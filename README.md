@@ -7,7 +7,7 @@
 [![Python Version](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-green.svg)](LICENSE)
 [![FastAPI](https://img.shields.io/badge/Framework-FastAPI-teal.svg)](https://fastapi.tiangolo.com/)
-[![Tests](https://img.shields.io/badge/Tests-1100%2B%20Passing-brightgreen.svg)](tests/)
+[![Tests](https://github.com/A3435331841/ShiYing/actions/workflows/tests.yml/badge.svg)](https://github.com/A3435331841/ShiYing/actions/workflows/tests.yml)
 
 [功能特性](#-功能特性) • [支持平台](#-支持平台) • [快速上手](#-快速上手) • [代码架构](#-代码架构) • [使用说明](docs/guides/拾影使用说明.md) • [许可证](LICENSE)
 
@@ -50,6 +50,8 @@
 | **YouTube** | 常规视频 / Shorts / 播放列表 / 频道 | 基于 yt-dlp 与 Deno 执行签名挑战 | 提取高分辨率分离流并合成 |
 | **微信视频号** | 单作品私有流 | 本地会话桥接，头部 ISAAC64 解密 | 凭据 DPAPI 加密，解密流经 FFprobe 校验 |
 
+> **接入 ≠ 全部链接可下载**。登录、私密、删除、风控与平台改版都会影响结果；各平台的当前实测验收状态（哪些已完成真机下载验收、哪些依赖登录态）以[《使用说明 · 平台实际范围》](docs/guides/拾影使用说明.md#平台实际范围)为准，此处不再逐项宣传。
+
 ---
 
 ## 🚀 快速上手
@@ -60,7 +62,10 @@
 - **FFmpeg / FFprobe**（加入系统 PATH，用于音视频合并与画质探测）
 
 ### Windows（推荐）
-在项目根目录下双击运行：
+
+**免装环境**：从仓库 [Releases](https://github.com/A3435331841/ShiYing/releases) 下载便携包 zip（解压即用）或安装程序（`scripts/release/build_exe.py --installer` 可自行构建），自带 FFmpeg/Deno，无需安装 Python。
+
+**源码方式**：在项目根目录下双击运行：
 - **`启动拾影.bat`**：启动服务并在默认浏览器打开 `http://127.0.0.1:8766`。
 - **`停止拾影.bat`**：安全停机，释放端口与互斥锁。
 

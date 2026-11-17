@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 from urllib.parse import parse_qs, urlsplit, urlunsplit
 
-from .models import Platform, SourceKind, UrlInfo
+from ..models import Platform, SourceKind, UrlInfo
 
 
 class UnsupportedUrlError(ValueError):
@@ -101,8 +101,8 @@ def identify_url(value: str) -> UrlInfo:
     query_with_blanks = parse_qs(parsed.query, keep_blank_values=True)
 
     if host in {"kuaishou.com", "www.kuaishou.com", "v.kuaishou.com", "m.kuaishou.com", "c.kuaishou.com", "m.gifshow.com"} or re.fullmatch(r"[a-z0-9-]+\.m\.chenzhongtech\.com", host):
-        from .errors import DiscoveryError
-        from .kuaishou import source_identity
+        from ..errors import DiscoveryError
+        from ..kuaishou import source_identity
 
         try:
             kind, _ = source_identity(url)
@@ -134,6 +134,10 @@ def identify_url(value: str) -> UrlInfo:
                 kind=SourceKind.ITEM,
             )
     if _is_domain(host, "douyin.com"):
+        # 抖音精选与主站物理分治：两者共用同一套作品 ID 归一化规则（解析器输入
+        # 需要规范的 /video/{id} 形式），但精选域名必须返回独立平台标识，由
+        # SELECTED_DOUYIN 独立承担落盘目录、重复检测与前端展示，不得并入主站。
+        selected_douyin = _is_domain(host, "jingxuan.douyin.com")
         user_match = re.fullmatch(r"/user/[^/]+", path)
         modal_values = query_with_blanks.get("modal_id", [])
         vid_values = query_with_blanks.get("vid", [])
@@ -166,7 +170,11 @@ def identify_url(value: str) -> UrlInfo:
             kind = SourceKind.PROFILE
         else:
             raise UnsupportedUrlError("Unsupported Douyin URL")
-        return UrlInfo(url=url, platform=Platform.DOUYIN, kind=kind)
+        return UrlInfo(
+            url=url,
+            platform=Platform.SELECTED_DOUYIN if selected_douyin else Platform.DOUYIN,
+            kind=kind,
+        )
 
     if host == "b23.tv":
         return UrlInfo(url=url, platform=Platform.BILIBILI, kind=SourceKind.SHORT_LINK)

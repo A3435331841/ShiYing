@@ -1,11 +1,17 @@
 import copy
-import winreg
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
-from app.wechat_network import ProxyConflictError, ProxyRecovery
-from app.wechat_secret import PREFIX
+# 本模块依赖 Windows 注册表 API；非 Windows 平台在收集期整模块跳过，
+# 避免 `import winreg` 直接 ModuleNotFoundError 炸掉整个测试会话。
+# 必须先于 import winreg 与 app.wechat_network（其内部同样依赖 winreg）。
+pytest.importorskip("winreg", reason="微信代理接管依赖 Windows 注册表 API")
+
+import winreg  # noqa: E402
+
+from app.wechat_network import ProxyConflictError, ProxyRecovery  # noqa: E402
+from app.wechat_secret import PREFIX  # noqa: E402
 
 
 class Registry:

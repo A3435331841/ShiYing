@@ -16,11 +16,18 @@ jobs:
       fail-fast: false
       matrix:
         os:
-          - macos-14
+          # macos-14（ARM）运行器配置对当前账号不可用（Actions 注解：
+          # "The configuration 'macos-14-arm64-us-default' is not supported"），
+          # 改用 macos-13（Intel）。若 GitHub 侧放开限制可换回 macos-latest。
+          - macos-13
           - ubuntu-latest
           - windows-latest
         python:
           - "3.10"
+          # 3.12 为发行包所用解释器，3.13 为本机主力开发环境；两者必须进矩阵，
+          # 否则会出现「CI 全绿但发布环境未验证」的盲区。
+          - "3.12"
+          - "3.13"
           - "3.14"
     steps:
       - uses: actions/checkout@v7

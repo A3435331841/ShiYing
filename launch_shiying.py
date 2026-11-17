@@ -10,7 +10,12 @@ import webbrowser
 from pathlib import Path
 from urllib.request import urlopen
 
-ROOT = Path(__file__).resolve().parent
+from app.build_info import project_root_for
+
+# 数据根（data/downloads/cache）：源码模式=仓库根；EXE 包=exe 所在目录（便携语义）。
+ROOT = project_root_for(Path(__file__).resolve().parent)
+# 静态资源根（app/static）：源码模式=仓库根；EXE 包=解包目录 _internal。
+SRC_ROOT = Path(__file__).resolve().parent
 # One port for every entry point (start.bat, start.command, start.sh, run.py and
 # this desktop shell). A second port made the desktop shell unable to see, or
 # reuse, a service that was already running.
@@ -71,6 +76,26 @@ class DesktopAPI:
         result = self._window.create_file_dialog(webview.FileDialog.FOLDER, directory=str(ROOT / 'downloads'))
         return result[0] if result else None
 
+    def quit_app(self):
+        """完全退出：经 stop.py 的身份校验停掉本机服务，再关闭桌面窗口。
+
+        关窗不停服务是有意设计；这里给用户一个显式的图形化出口。
+        stop_backend 无法证明目标是本项目的实例时会抛 StopRefusedError 拒绝动手。
+        """
+        from stop import StopRefusedError, stop_backend
+        try:
+            stop_backend(port=PORT, timeout=8.0)
+        except StopRefusedError as exc:
+            return {"ok": False, "message": f"无法确认本机服务身份，已取消退出：{exc}"}
+        except Exception as exc:
+            return {"ok": False, "message": f"停止服务失败：{type(exc).__name__}: {exc}"}
+        try:
+            if self._window is not None:
+                self._window.destroy()
+        except Exception:
+            pass
+        return {"ok": True}
+
 
 _HELD_MUTEX = None
 
@@ -111,21 +136,26 @@ def launch():
                 )
         logdir = ROOT / 'data'
         logdir.mkdir(exist_ok=True)
+        if getattr(sys, 'frozen', False):
+            # EXE 便携包：包内没有 Python 解释器，后端由同一个 exe 的 --serve 分支承载。
+            cmd = [sys.executable, '--serve', '--no-browser', '--port', str(PORT)]
+        else:
+            cmd = [str(ROOT / '.venv/Scripts/python.exe'), str(ROOT / 'run.py'), '--no-browser', '--port', str(PORT)]
         with (logdir / 'server.log').open('ab') as log:
-            subprocess.Popen([str(ROOT / '.venv/Scripts/python.exe'), str(ROOT / 'run.py'), '--no-browser', '--port', str(PORT)], cwd=ROOT, stdout=log, stderr=log, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
+            subprocess.Popen(cmd, cwd=ROOT, stdout=log, stderr=log, creationflags=getattr(subprocess, 'CREATE_NO_WINDOW', 0))
         for _ in range(100):
             if healthy():
                 break
             time.sleep(.25)
         else:
-            raise RuntimeError('启动失败，请查看 D:\\Shiying\\data\\server.log。首次使用请运行 安装依赖.bat。')
+            raise RuntimeError(f'启动失败，请查看 {ROOT}\\data\\server.log。首次使用请运行 安装依赖.bat。')
     try:
         import webview
         webview.settings['OPEN_EXTERNAL_LINKS_IN_BROWSER'] = True
         api = DesktopAPI()
         window = webview.create_window(TITLE, URL, js_api=api, width=1380, height=900, min_size=(740, 620), background_color='#F5F7FA', text_select=True)
         api._window = window
-        webview.start(gui='edgechromium', private_mode=False, storage_path=str(ROOT / 'data/webview'), icon=str(ROOT / 'app/static/brand.ico'))
+        webview.start(gui='edgechromium', private_mode=False, storage_path=str(ROOT / 'data/webview'), icon=str(SRC_ROOT / 'app/static/brand.ico'))
     except Exception as exc:
         with (ROOT / 'data/desktop.log').open('a', encoding='utf-8') as log:
             log.write(f'{type(exc).__name__}: {exc}\n')
@@ -133,6 +163,11 @@ def launch():
 
 
 if __name__ == '__main__':
+    # 冻结运行（EXE 便携包）：`拾影.exe --serve ...` 作为后端进程入口，
+    # 由桌面壳以无窗口方式派生；源码模式仍直接进入桌面壳。
+    if '--serve' in sys.argv[1:]:
+        from run import main as run_main
+        raise SystemExit(run_main([arg for arg in sys.argv[1:] if arg != '--serve']))
     try:
         os.chdir(ROOT)
         launch()

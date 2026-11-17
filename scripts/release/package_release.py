@@ -22,6 +22,11 @@ EXCLUDE_DIRS = {
     "releases",
     "backups",
     "graphify-out",
+    # 运行态数据与审计快照：可能包含下载中的媒体、截图与工具痕迹，
+    # 与 AGENTS.md「个人数据与运行态隔离」红线一致，绝不进源码发行包。
+    "cache",
+    "artifacts",
+    "审计产物",
 }
 
 EXCLUDE_SUFFIXES = {
@@ -33,6 +38,10 @@ EXCLUDE_SUFFIXES = {
     ".pem",
     ".key",
     ".env",
+    # 扩展打包产物与证书/私钥容器不是源码，随包分发无收益且带来凭据风险。
+    ".crx",
+    ".p12",
+    ".cer",
 }
 
 
@@ -83,9 +92,11 @@ def package_release(version: str | None = None) -> Path:
 
 def update_checksums() -> None:
     checksums = []
-    for zip_file in sorted(RELEASES_DIR.glob("*.zip")):
-        sha = compute_sha256(zip_file)
-        checksums.append(f"{sha}  {zip_file.name}")
+    # 源码 zip 与便携包 zip 走 *.zip；Inno Setup 安装程序是 *.exe，一并纳入校验。
+    artifacts = sorted(RELEASES_DIR.glob("*.zip")) + sorted(RELEASES_DIR.glob("*.exe"))
+    for artifact in artifacts:
+        sha = compute_sha256(artifact)
+        checksums.append(f"{sha}  {artifact.name}")
 
     sums_path = RELEASES_DIR / "SHA256SUMS.txt"
     sums_path.write_text("\n".join(checksums) + "\n", encoding="utf-8")

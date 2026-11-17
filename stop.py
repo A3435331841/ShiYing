@@ -16,7 +16,7 @@ from typing import Any, Sequence
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
-from app.build_info import APP_ID
+from app.build_info import APP_ID, project_root_for
 from app.launcher_control import (
     InvalidLauncherRecordError,
     LauncherRecord,
@@ -37,7 +37,7 @@ from app.runtime import (
 HOST = "127.0.0.1"
 LEGACY_PORT = 8765
 DEFAULT_STOP_TIMEOUT_SECONDS = 150.0
-PROJECT_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = project_root_for(Path(__file__).resolve().parent)
 DEFAULT_RUNTIME_DIR = PROJECT_ROOT / "data" / "runtime"
 _MAX_RESPONSE_BYTES = 16_384
 _RUN_PY_TOKEN = re.compile(r"(?:^|[\\/])run\.py$")

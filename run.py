@@ -20,7 +20,7 @@ from urllib.request import Request, urlopen
 import uvicorn
 
 from app.browser import open_chrome
-from app.build_info import APP_ID, APP_VERSION, BUILD_ID
+from app.build_info import APP_ID, APP_VERSION, BUILD_ID, project_root_for
 from app.runtime import (
     DEFAULT_RUNTIME_DIR,
     DEFAULT_SERVER_PORT,
@@ -45,7 +45,7 @@ from app.runtime import (
 
 
 HOST = "127.0.0.1"
-PROJECT_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = project_root_for(Path(__file__).resolve().parent)
 PARENT_POLL_SECONDS = 0.25
 PARENT_FORCE_STOP_SECONDS = 135.0
 

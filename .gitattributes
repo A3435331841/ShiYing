@@ -1,0 +1,12 @@
+# 跨平台一致性：图形资产与文本格式的换行策略必须与 sources.json 记录的
+# 校验和绑定（平台图标哈希按规范 LF 字节计算，见 tests/test_platform_artwork.py）。
+# 二进制资产显式声明，防止任何 autocrlf 误转换。
+*.svg text eol=lf
+*.json text eol=lf
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.webp binary
+*.woff binary
+*.woff2 binary

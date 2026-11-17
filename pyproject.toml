@@ -1,6 +1,6 @@
 [project]
 name = "shiying"
-version = "0.3.0"
+version = "0.3.1"
 description = "拾影：在本机运行的媒体下载工具（Web GUI + 桌面壳）。"
 # 含 GPL-3.0-or-later 的快手模块，组合发行遵循 GPL-3.0-or-later；
 # 原始 MIT 文件保留其归属（见 NOTICE.md 与 LICENSE / LICENSE.MIT）。
@@ -14,6 +14,19 @@ dependencies = [
     "yt-dlp[default,deno]==2026.8.19",
     "pywebview==6.2.1",
     "requests>=2.32,<3",
+]
+
+# PEP 735 依赖组：测试与打包工具不属于运行时依赖，
+# requirements.lock.txt 仍由 `uv export --no-dev` 生成，不受影响。
+[dependency-groups]
+dev = [
+    "pytest>=8.3,<10",
+    # starlette.testclient 需要 httpx；API 测试在收集期即 import 它。
+    "httpx>=0.27,<1",
+]
+build = [
+    # EXE 便携包构建（scripts/release/build_exe.py）仅在 Windows 上执行。
+    "pyinstaller>=6,<7 ; sys_platform == 'win32'",
 ]
 
 [tool.pytest.ini_options]

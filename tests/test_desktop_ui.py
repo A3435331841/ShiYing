@@ -1,6 +1,10 @@
+import sys
 from pathlib import Path
 from types import SimpleNamespace
+
+import pytest
 from fastapi.testclient import TestClient
+
 from app import main, wechat
 
 
@@ -25,8 +29,8 @@ def test_open_folder_only_uses_saved_job_paths(monkeypatch, tmp_path):
     assert opened == before
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="Explorer 窗口复用是 Windows STA/COM 专属行为")
 def test_existing_explorer_window_is_reused(monkeypatch, tmp_path):
-    import sys
     import types
     import app.desktop as desktop
 
@@ -84,6 +88,7 @@ def test_existing_explorer_window_is_reused(monkeypatch, tmp_path):
     assert opened == []
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="元宝 Cookie 走 Windows DPAPI（crypt32）保存")
 def test_wechat_cancel_and_cookie_clear(monkeypatch, tmp_path):
     import threading
     monkeypatch.setattr(wechat, 'STATE', tmp_path / 'jobs.json')

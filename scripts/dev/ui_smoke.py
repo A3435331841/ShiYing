@@ -57,7 +57,8 @@ def run():
                 checks.append(selector + ' activated matching Explorer window')
             outcome['passed'] = True
             return
-        check(window.evaluate_js("document.querySelector('#save-path').textContent").startswith('D:\\Shiying'), 'home ready with D drive output')
+        configured_dir = str(Path(api('/api/config')['download_dir']))
+        check(window.evaluate_js("document.querySelector('#save-path').textContent") == configured_dir, 'home shows configured output path')
         window.evaluate_js("window.__qaErrors=[];window.addEventListener('error',e=>window.__qaErrors.push(e.message));window.addEventListener('unhandledrejection',e=>window.__qaErrors.push(String(e.reason)));")
         window.evaluate_js("document.querySelector('[data-open-settings]').click()")
         wait_for("document.querySelector('#settings-dialog').open")
@@ -80,7 +81,7 @@ def run():
             job = next(j for j in api('/api/jobs') if j['platform'] == 'bilibili')
         job_id = job['id']
         outcome['job_id'] = job_id
-        check(job['output_root'].startswith('D:\\Shiying'), 'real job uses D output')
+        check(job['output_root'] == configured_dir, 'real job uses configured output root')
         deadline = time.monotonic() + 600
         while time.monotonic() < deadline:
             job = api('/api/jobs/' + job_id)

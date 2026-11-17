@@ -1,0 +1,421 @@
+/* ==========================================================================
+   拾影 · 影像档案重设计层 (v0.4)
+   --------------------------------------------------------------------------
+   设计意图：不推翻已达标的蓝灰基底与深浅主题 token，而是在其之上建立
+   「本机影像档案」的产品身份 —— 用封面、日期刻印、帧线、等宽数字承载信息，
+   让平台色/状态色/进度色各司其职，消除通用任务后台观感。
+
+   约定：
+   - 本文件在 home.css 之后加载。home.css 保留全部既有契约选择器，
+     这里只做覆盖与增强，不改动被测试硬断言的选择器定义。
+   - 所有新增色值仅用于「语义」而非装饰；主文字/按钮对比度沿用已实测
+     达标的 --primary-* 与 --ink-*（WCAG AA，浅色 4.84 / 暗色 4.50）。
+   - 无渐变、无玻璃拟态、无卡片阴影堆叠；唯一模糊仍是弹窗遮罩。
+   ========================================================================== */
+
+:root {
+  /* 档案语义层：不改变原有主题色，只补充中性档案色与排版尺度 */
+  --archive-paper: #fbfcfe;
+  --archive-line: #dbe3ef;
+  --archive-frame: #c3cede;
+  /* 档案刻印文字实测需 ≥4.5:1（10.5px 小字），#6b7c93 仅 3.93:1，加深至此。 */
+  --archive-stamp: #4d5d75;
+  --archive-tab: 3px;
+  --archive-gap: 14px;
+  --archive-radius: 12px;
+  --shadow-archive: 0 1px 0 #101c2e08, 0 2px 10px -6px #101c2e14;
+}
+html[data-theme="dark"] {
+  --archive-paper: #16233500;
+  --archive-line: #26374e;
+  --archive-frame: #3a4c65;
+  --archive-stamp: #93a6bf;
+  --shadow-archive: 0 1px 0 #0003, 0 2px 12px -6px #0006;
+}
+
+/* --------------------------------------------------------------------------
+   1. Shell · 居中限宽（解决 2560px 右侧 1040px 空白）
+   -------------------------------------------------------------------------- */
+body { background: var(--bg); }
+.workspace {
+  max-width: none;
+  margin-left: var(--sidebar);
+  margin-right: auto;
+  padding: 0 clamp(20px, 3.2vw, 48px) 48px;
+}
+.workspace > * { max-width: 1240px; margin-left: auto; margin-right: auto; }
+@media (min-width: 1700px) {
+  .workspace {
+    margin-left: var(--sidebar);
+    padding-left: clamp(20px, 3vw, 44px);
+    padding-right: clamp(20px, 3vw, 44px);
+  }
+}
+.topbar { height: 68px; border-bottom: 1px solid var(--archive-line); margin-bottom: 22px; }
+.workspace-title h1 { font-size: 19px; letter-spacing: .1px; }
+.workspace-title > span { border-left-color: var(--archive-frame); }
+
+/* --------------------------------------------------------------------------
+   2. Sidebar · 档案柜语义 + 本机受控可见
+   -------------------------------------------------------------------------- */
+.sidebar {
+  background: var(--surface);
+  border-right: 1px solid var(--archive-line);
+  padding: 20px 13px 16px;
+}
+.brand { margin: 2px 6px 22px; }
+.brand small { letter-spacing: .9px; text-transform: uppercase; font-size: 10px; }
+.nav-group-label {
+  margin: 16px 12px 7px; font-size: 10px; font-weight: 700;
+  letter-spacing: 1.4px; text-transform: uppercase; color: var(--archive-stamp);
+}
+.nav-button.selected { box-shadow: inset 2px 0 0 var(--brand), inset 0 0 0 1px #2f66f51a; }
+.sidebar-card {
+  margin: 18px 2px 0; padding: 13px 14px 12px;
+  border: 1px solid var(--archive-line); border-radius: var(--archive-radius);
+  background: var(--archive-paper);
+}
+.sidebar-card-title { letter-spacing: 1.1px; }
+.sidebar-card-value { font-family: var(--mono); font-size: 15px; letter-spacing: -.4px; }
+.privacy-note {
+  display: flex; align-items: flex-start; gap: 7px;
+  margin: 10px 6px 0; padding: 9px 10px;
+  font-size: 11px; line-height: 1.5; color: var(--ink-3);
+  background: var(--surface-2); border: 1px solid var(--archive-line);
+  border-radius: 9px;
+}
+.privacy-note svg { width: 14px; height: 14px; color: var(--ok); margin-top: 1px; }
+.sidebar-bottom { border-top-color: var(--archive-line); }
+
+/* --------------------------------------------------------------------------
+   3. Hero · 收集意图（首次使用完整引导，有任务时自动收起）
+   -------------------------------------------------------------------------- */
+.archive-hero { padding: 4px 2px 14px; }
+.archive-hero .eyebrow {
+  display: flex; align-items: center; gap: 9px;
+  font: 600 10.5px var(--mono); letter-spacing: 1.6px;
+  text-transform: uppercase; color: var(--archive-stamp);
+}
+.archive-hero .eyebrow::before { content: ""; width: 22px; height: 1px; background: var(--archive-frame); }
+.archive-hero h2 {
+  margin-top: 8px; font-size: clamp(24px, 2.3vw, 32px);
+  font-weight: 730; letter-spacing: -.4px; line-height: 1.3;
+}
+.archive-hero p { margin-top: 5px; font-size: 13px; color: var(--ink-2); }
+/* 有任务时收起：保留一行 Hero 作为产品身份锚点，只收起说明、平台行与表单余量。
+   完全隐藏 Hero 会让「收集」页退化成没有名字的通用输入框。 */
+#composer.compact .archive-hero { padding: 0 2px 10px; }
+#composer.compact .archive-hero .eyebrow { display: none; }
+#composer.compact .archive-hero h2 { font-size: 19px; margin-top: 0; }
+#composer.compact .archive-hero p { display: none; }
+#composer.compact .section-head { padding: 0 2px 8px; }
+#composer.compact .section-head > div { display: none; }
+#composer.compact .platform-row { display: none; }
+#composer.compact .input-card { padding-top: 11px; }
+#composer.compact textarea { min-height: 54px; max-height: 120px; }
+#composer.compact .composer-bar { margin-top: 9px; padding-top: 9px; }
+.composer-toggle {
+  display: inline-flex; align-items: center; gap: 6px;
+  margin-left: auto; padding: 3px 9px; font-size: 11.5px; font-weight: 600;
+  color: var(--brand-ink); background: var(--brand-soft);
+  border: 1px solid #2f66f526; border-radius: 7px;
+}
+/* 全引导态已有 Hero 标题与说明，section-head 只保留「收起引导」操作，
+   避免出现两个叠在一起的大标题（与 design/主页参考.png 的单 Hero 一致）。 */
+.section-head { align-items: center; justify-content: flex-end; padding: 0 2px 8px; min-height: 0; }
+.section-head > div { display: none; }
+.section-head .composer-toggle { margin-left: 0; }
+
+/* --------------------------------------------------------------------------
+   4. 输入识别统计（多条链接实时反馈）
+   -------------------------------------------------------------------------- */
+.link-insights {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px;
+  margin: 10px 0 0; padding: 0; font-size: 11.5px;
+  color: var(--ink-3); font-variant-numeric: tabular-nums;
+}
+.link-insights[hidden] { display: none !important; }
+.link-insights .insight-item { display: inline-flex; align-items: center; gap: 5px; }
+.link-insights .insight-item::before {
+  content: ""; width: 5px; height: 5px; border-radius: 50%; background: var(--archive-frame);
+}
+.link-insights .insight-ok::before { background: var(--ok); }
+.link-insights .insight-warn::before { background: var(--warn); }
+.link-insights .insight-bad::before { background: var(--danger); }
+.link-insights strong { font-family: var(--mono); font-weight: 650; color: var(--ink-2); }
+.link-insights .insight-help { margin-left: auto; font-size: 11px; color: var(--archive-stamp); }
+.link-invalid-list {
+  margin: 8px 0 0; padding: 8px 11px; font-size: 11.5px; line-height: 1.6;
+  color: var(--danger); background: var(--danger-soft);
+  border: 1px solid #b3252c20; border-radius: 8px;
+  overflow-wrap: anywhere;
+}
+.link-invalid-list[hidden] { display: none !important; }
+
+/* --------------------------------------------------------------------------
+   5. 任务行 · 三层信息 + 平台色收敛 + 稳定动作区
+   -------------------------------------------------------------------------- */
+#task-list { gap: 10px; }
+.task-row {
+  grid-template-columns: minmax(0, 1fr) 108px 130px auto;
+  gap: 14px; padding: 12px 15px 12px 16px;
+  border-color: var(--archive-line); border-radius: var(--archive-radius);
+  background: var(--archive-paper);
+  box-shadow: var(--shadow-archive);
+  /* 平台色从「3px 通高左边条」收敛为一枚 8px 帧线标记 */
+  box-shadow: inset 3px 0 0 var(--row-accent, var(--archive-frame)), var(--shadow-archive);
+}
+.task-row:hover { border-color: var(--archive-frame); }
+.task-row.completed-row { grid-template-columns: minmax(0, 1fr) 130px auto; }
+/* 日期刻印 / 帧线：用中性线替代彩色占位底 */
+.task-thumb-wrap {
+  width: 96px; height: 62px;
+  border-radius: 8px; border: 1px solid var(--archive-line);
+  background: var(--surface-3);
+}
+.media-placeholder {
+  width: 96px; height: 62px; border-radius: 8px;
+  background: var(--surface-3); color: var(--archive-stamp);
+}
+.media-placeholder small { font-size: 10px; letter-spacing: .3px; }
+/* 无真实封面时按内容类型使用本批生成的缺省封面，不再统一 film 占位 */
+.task-thumb-wrap.media-video   { background: var(--surface-3) url('/static/media/cover-video.webp') center/cover no-repeat; }
+.task-thumb-wrap.media-image   { background: var(--surface-3) url('/static/media/cover-image.webp') center/cover no-repeat; }
+.task-thumb-wrap.media-live    { background: var(--surface-3) url('/static/media/cover-live.webp') center/cover no-repeat; }
+.task-thumb-wrap.media-video .media-placeholder,
+.task-thumb-wrap.media-image .media-placeholder,
+.task-thumb-wrap.media-live .media-placeholder,
+.task-thumb-wrap.has-cover .media-placeholder { background: transparent; }
+/* 缺省封面下隐藏旧的字符占位与文字，但保留官方平台图标作为右下角识别角标。
+   平台图标有版权与溯源约束，不能用生成的图形替代，也不能整块消失。 */
+.task-thumb-wrap.media-video .media-placeholder,
+.task-thumb-wrap.media-image .media-placeholder,
+.task-thumb-wrap.media-live .media-placeholder { background: transparent; }
+.task-thumb-wrap.media-video .media-placeholder small,
+.task-thumb-wrap.media-image .media-placeholder small,
+.task-thumb-wrap.media-live .media-placeholder small { display: none; }
+.task-thumb-wrap.media-video .thumb-platform-icon,
+.task-thumb-wrap.media-image .thumb-platform-icon,
+.task-thumb-wrap.media-live .thumb-platform-icon {
+  position: absolute; right: 4px; bottom: 4px; z-index: 3;
+  width: 17px; height: 17px; border-radius: 4px; padding: 1px;
+  background: var(--surface); box-shadow: 0 1px 4px #101c2e33;
+}
+.task-copy { gap: 4px; }
+.task-title { font-size: 14.5px; font-weight: 640; letter-spacing: -.1px; }
+.task-meta {
+  font-size: 12px; color: var(--ink-3);
+  font-variant-numeric: tabular-nums;
+}
+/* 元信息里的日期用等宽数字，形成「刻印」语义 */
+.task-meta::first-letter { letter-spacing: 0; }
+.transfer, .size-cell { font-family: var(--mono); font-size: 11px; letter-spacing: -.2px; }
+.track { height: 5px; background: var(--surface-3); }
+.track span { background: var(--brand); }
+.status { font-size: 11.5px; border: 1px solid transparent; }
+.status::before { width: 5px; height: 5px; }
+/* 四色竞争收敛：平台色只在缩略图角标，错误色只在错误行 */
+.task-row.platform-xiaohongshu,
+.task-row.platform-youtube,
+.task-row.platform-bilibili,
+.task-row.platform-kuaishou,
+.task-row.platform-wechat,
+.task-row.platform-douyin,
+.task-row.platform-selected-douyin { --row-accent: var(--archive-frame); }
+.task-row .thumb-platform-icon {
+  position: absolute; right: 3px; bottom: 3px; z-index: 2;
+  width: 16px; height: 16px; border-radius: 4px;
+  background: var(--surface); padding: 1px; box-shadow: 0 1px 3px #101c2e26;
+}
+.task-row .media-placeholder .thumb-platform-icon { position: static; width: 20px; height: 20px; box-shadow: none; }
+.operations { min-height: 34px; flex-wrap: nowrap; }
+.operations .secondary { font-size: 11.5px; }
+.task-more summary { font-size: 11.5px; padding: 4px 7px; border: 1px solid var(--archive-line); }
+
+/* 资料库（已完成）改缩略图网格 —— IA 从「任务记录列表」转为「归档浏览」 */
+#tasks-section[data-view="completed"] #task-list {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(238px, 1fr)); gap: 14px;
+}
+#tasks-section[data-view="completed"] .task-row {
+  display: flex; flex-direction: column; align-items: stretch; gap: 0;
+  padding: 0; overflow: hidden;
+}
+#tasks-section[data-view="completed"] .content-cell { flex-direction: column; align-items: stretch; gap: 0; }
+#tasks-section[data-view="completed"] .task-thumb-wrap {
+  width: 100%; height: 132px; border: 0; border-radius: 0;
+  border-bottom: 1px solid var(--archive-line);
+}
+#tasks-section[data-view="completed"] .task-thumb-img { object-fit: cover; }
+#tasks-section[data-view="completed"] .task-copy { padding: 11px 13px 13px; gap: 5px; }
+#tasks-section[data-view="completed"] .task-title { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+#tasks-section[data-view="completed"] .size-cell { display: none; }
+#tasks-section[data-view="completed"] .operations {
+  padding: 0 13px 13px; justify-content: flex-start; min-height: 0;
+}
+#tasks-section[data-view="completed"] .task-thumb-wrap.media-video,
+#tasks-section[data-view="completed"] .task-thumb-wrap.media-image,
+#tasks-section[data-view="completed"] .task-thumb-wrap.media-live { background-size: cover; }
+
+/* --------------------------------------------------------------------------
+   6. 状态语义：loading / 真实空库 / 筛选无结果 / 离线，四态互斥
+   -------------------------------------------------------------------------- */
+.empty-state {
+  gap: 10px; padding: 40px 24px 44px;
+  border: 1px solid var(--archive-line); border-radius: var(--archive-radius);
+  background: var(--archive-paper);
+}
+.empty-state .empty-illustration {
+  width: 168px; height: 126px; object-fit: cover; object-position: center;
+  border-radius: 10px; border: 1px solid var(--archive-line);
+  margin-bottom: 4px; background: var(--surface-3);
+}
+.empty-state .empty-icon { display: none; }
+.empty-state h3 { font-size: 15px; }
+.empty-state p { font-size: 12.5px; max-width: 380px; }
+/* 离线态：独立面板，绝不与空库同屏 */
+.offline-panel {
+  display: flex; align-items: flex-start; gap: 14px;
+  margin-bottom: 14px; padding: 16px 18px;
+  background: var(--surface); border: 1px solid var(--archive-line);
+  border-left: 3px solid var(--danger); border-radius: var(--archive-radius);
+}
+.offline-panel[hidden] { display: none !important; }
+.offline-panel svg { width: 20px; height: 20px; color: var(--danger); margin-top: 2px; }
+.offline-panel h3 { font-size: 14px; font-weight: 650; }
+.offline-panel p { margin-top: 3px; font-size: 12px; line-height: 1.6; color: var(--ink-3); }
+.offline-panel .secondary { margin-left: auto; flex-shrink: 0; }
+#tasks-section[data-list-state="offline"] #empty-state { display: none !important; }
+#tasks-section[data-list-state="offline"] #task-footer { opacity: .6; }
+#tasks-section[data-list-state="loading"] #empty-state { display: none !important; }
+.loading-skeleton { display: none; }
+#tasks-section[data-list-state="loading"] .loading-skeleton {
+  display: block; padding: 10px 0;
+}
+.loading-skeleton .skeleton-row {
+  height: 74px; margin-bottom: 10px; border-radius: var(--archive-radius);
+  border: 1px solid var(--archive-line); background: var(--surface);
+  position: relative; overflow: hidden;
+}
+.loading-skeleton .skeleton-row::after {
+  content: ""; position: absolute; inset: 0;
+  background: linear-gradient(90deg, transparent, var(--surface-3), transparent);
+  transform: translateX(-100%); animation: skeleton-sweep 1.4s infinite;
+}
+@keyframes skeleton-sweep { to { transform: translateX(100%); } }
+@media (prefers-reduced-motion: reduce) { .loading-skeleton .skeleton-row::after { animation: none; } }
+
+/* 状态胶囊：中文文案已承担区分职责，颜色仅作辅助；不同状态给不同形状标记，
+   避免只靠颜色区分「需处理 / 暂停 / 失败」（审查 :266）。 */
+.status.success { border-color: #0f7a5226; }
+.status.warning { border-color: #94540a26; }
+.status.failed { border-color: #b3252c30; }
+.status.success::before { border-radius: 50%; }
+.status.warning::before { border-radius: 2px; transform: rotate(45deg); }
+.status.failed::before { border-radius: 1px; width: 4px; height: 9px; }
+
+/* --------------------------------------------------------------------------
+   7. 弹窗分层 · 常规 / 登录态 / 存储
+   -------------------------------------------------------------------------- */
+.settings-group-label {
+  display: flex; align-items: center; gap: 9px;
+  margin: 0 0 2px; font: 700 10.5px var(--mono);
+  letter-spacing: 1.3px; text-transform: uppercase; color: var(--archive-stamp);
+}
+.settings-group-label::after { content: ""; flex: 1; height: 1px; background: var(--archive-line); }
+.settings-section { border-top-color: var(--archive-line); }
+.env-status {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+  padding: 9px 11px; margin: 0 0 4px; border-radius: 9px;
+  background: var(--surface-2); border: 1px solid var(--archive-line);
+  font-size: 11.5px; color: var(--ink-2);
+}
+.env-status .env-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ok); }
+.env-status.env-bad .env-dot { background: var(--danger); }
+dialog { border-radius: var(--archive-radius); border-color: var(--archive-line); }
+.help-steps li { border-left: 1px solid var(--archive-line); padding-left: 16px; margin-left: -6px; list-style: none; counter-increment: archive-step; }
+.help-steps li::before {
+  content: counter(archive-step); position: absolute; margin-left: -25px;
+  font: 700 10px var(--mono); color: var(--archive-stamp);
+}
+.help-steps { counter-reset: archive-step; list-style: none; padding-left: 20px; }
+.help-steps li { position: relative; }
+
+/* --------------------------------------------------------------------------
+   8. 移动端 · 底部 Tab（不占内容宽度）
+   -------------------------------------------------------------------------- */
+.mobile-tabs { display: none; }
+@media (max-width: 760px) {
+  .sidebar {
+    position: fixed; inset: 0 auto auto 0; width: 100%; height: 54px;
+    flex-direction: row; align-items: center; padding: 0 14px;
+    border-right: 0; border-bottom: 1px solid var(--archive-line);
+    z-index: 30;
+  }
+  .sidebar .brand { margin: 0; }
+  .sidebar .brand img { width: 28px; height: 30px; }
+  /* home.css 的 1040px 断点隐藏了 .brand > span；窄屏顶栏需要文字标题，
+     否则只剩一个孤立 logo，产品身份丢失。 */
+  .sidebar .brand > span { display: block !important; }
+  .sidebar .brand strong { display: block; font-size: 16px; }
+  .sidebar .brand small, .sidebar nav, .sidebar .sidebar-card,
+  .sidebar .privacy-note, .sidebar .sidebar-bottom { display: none; }
+  .workspace { margin-left: 0; padding: 54px 12px 78px; }
+  .topbar { height: 56px; margin-bottom: 14px; }
+  .workspace-title > span { display: inline; font-size: 11px; padding-left: 10px; }
+  .top-actions .connection span { display: none; }
+  .top-actions .connection { padding: 6px; }
+  .archive-hero h2 { font-size: 22px; }
+  .mobile-tabs {
+    display: grid; grid-template-columns: repeat(4, 1fr);
+    position: fixed; inset: auto 0 0 0; z-index: 30;
+    height: 64px; padding-bottom: env(safe-area-inset-bottom);
+    background: var(--surface); border-top: 1px solid var(--archive-line);
+  }
+  .mobile-tabs .nav-button {
+    flex-direction: column; gap: 2px; justify-content: center;
+    min-height: 0; padding: 6px 2px; font-size: 10.5px; border-radius: 0;
+  }
+  .mobile-tabs .nav-button svg { width: 19px; height: 19px; }
+  .mobile-tabs .nav-button.selected { box-shadow: inset 0 2px 0 var(--brand); }
+  .mobile-tabs .nav-button .count { display: none; }
+  .toast-region { bottom: 74px; }
+  /* 任务行单列，标题不再被挤成两字 */
+  .task-row, .task-row.completed-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px 10px; padding: 11px 12px;
+  }
+  .content-cell { grid-column: 1 / 3; grid-row: 1; }
+  .status-cell { grid-column: 1; grid-row: 2; justify-content: flex-start; }
+  .size-cell { display: none; }
+  .operations { grid-column: 2; grid-row: 2; justify-content: flex-end; }
+  .task-thumb-wrap, .media-placeholder { width: 78px; height: 56px; }
+  .task-meta { font-size: 11.5px; }
+  #tasks-section[data-view="completed"] #task-list { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  #tasks-section[data-view="completed"] .task-thumb-wrap { height: 96px; }
+  .task-tools { gap: 4px; }
+  .search-box { width: 100%; }
+  .composer-actions kbd { display: none; }
+}
+@media (max-width: 520px) {
+  .composer-bar { flex-direction: column; align-items: stretch; gap: 9px; }
+  .composer-actions { justify-content: stretch; }
+  .composer-actions .primary, .composer-actions .secondary { flex: 1; }
+  .save-path strong { max-width: none; }
+  .archive-hero h2 { font-size: 20px; }
+  #tasks-section[data-view="completed"] #task-list { grid-template-columns: 1fr; }
+  .workspace-title > span { display: none; }
+}
+@media (max-width: 1040px) and (min-width: 761px) {
+  .sidebar .privacy-note { display: none; }
+  .task-row { grid-template-columns: minmax(0, 1fr) 100px auto; }
+  .size-cell { display: none; }
+}
+
+/* 断点协同降级：消除 1220→1221 的 179px 台阶（size 并入元信息行） */
+@media (max-width: 1220px) {
+  .task-row { grid-template-columns: minmax(0, 1fr) 108px auto; gap: 12px; }
+  .size-cell { display: none; }
+}
+@media (min-width: 1221px) {
+  .task-row { grid-template-columns: minmax(0, 1fr) 108px 130px auto; }
+}

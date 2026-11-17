@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="zh-CN" data-ui="shiying">
+<html lang="zh-CN" data-ui="shiying" data-design="archive-0.4">
 <head>
-<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="app-id" content="__APP_ID__"><meta name="app-version" content="__APP_VERSION__"><meta name="app-build" content="__BUILD_ID__">
-<title>拾影 · 视频下载工具</title><link rel="icon" href="/static/brand.svg" type="image/svg+xml"><link rel="stylesheet" href="/static/home.css">
+<title>拾影 · 本地影像档案</title><link rel="icon" href="/static/brand.svg" type="image/svg+xml"><link rel="stylesheet" href="/static/home.css"><link rel="stylesheet" href="/static/redesign.css?v=__BUILD_ID__">
 <script defer src="/static/app.js?v=__BUILD_ID__"></script><script defer src="/static/task-views.js?v=__BUILD_ID__"></script><script defer src="/static/home.js?v=__BUILD_ID__"></script>
 </head><body>
 <svg class="svg-defs" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><defs>
@@ -25,13 +25,23 @@
 <symbol id="i-play" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7z"/></symbol>
 <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3 2 20h20z"/><path d="M12 9v5m0 3v1"/></symbol>
 <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 5 6v6c0 4 3 7 7 9 4-2 7-5 7-9V6z"/></symbol>
+<!-- 影像档案重设计层新增符号：语义化，不复用平台商标 -->
+<symbol id="i-archive" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="4" rx="1"/><path d="M5 8v11h14V8M10 12h4"/></symbol>
+<symbol id="i-progress" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+<symbol id="i-collect" viewBox="0 0 24 24"><path d="M12 4v10m-4-4 4 4 4-4M4 17v3h16v-3"/><rect x="3" y="4" width="18" height="3" rx="1"/></symbol>
+<symbol id="i-grid" viewBox="0 0 24 24"><rect x="3" y="3" width="8" height="8" rx="1"/><rect x="13" y="3" width="8" height="8" rx="1"/><rect x="3" y="13" width="8" height="8" rx="1"/><rect x="13" y="13" width="8" height="8" rx="1"/></symbol>
+<symbol id="i-image" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9" r="1.5"/><path d="m4 17 5-5 3 3 3-3 5 5"/></symbol>
+<symbol id="i-live" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m10 9 5 3-5 3z"/><path d="M7 3v2m5-2v2m5-2v2"/></symbol>
+<symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+<symbol id="i-hdd" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 15h.01M11 15h.01M15 15h6"/></symbol>
 </defs></svg>
 <aside class="sidebar" aria-label="主导航">
-  <a class="brand" href="#home" aria-label="拾影首页"><img src="/static/brand.svg" alt="" width="38" height="40"><span><strong>拾影</strong><small>本地视频下载</small></span></a>
+  <a class="brand" href="#home" aria-label="拾影首页"><img src="/static/brand.svg" alt="" width="38" height="40"><span><strong>拾影</strong><small>本地影像档案</small></span></a>
   <nav>
-    <button class="nav-button selected" data-view="home" aria-current="page" aria-label="首页"><svg><use href="#i-home"/></svg><span>首页</span></button>
-    <button class="nav-button" data-view="tasks" aria-label="下载任务"><svg><use href="#i-download"/></svg><span>下载任务</span><span id="nav-count" class="count">0</span></button>
-    <button class="nav-button" data-view="completed" aria-label="已完成"><svg><use href="#i-check"/></svg><span>已完成</span></button>
+    <p class="nav-group-label">工作区</p>
+    <button class="nav-button selected" data-view="home" aria-current="page" aria-label="收集"><svg><use href="#i-collect"/></svg><span>收集</span></button>
+    <button class="nav-button" data-view="tasks" aria-label="进度"><svg><use href="#i-progress"/></svg><span>进度</span><span id="nav-count" class="count">0</span></button>
+    <button class="nav-button" data-view="completed" aria-label="资料库"><svg><use href="#i-archive"/></svg><span>资料库</span></button>
   </nav>
   <div class="sidebar-card" aria-label="下载缓存">
     <div class="sidebar-card-head">
@@ -41,6 +51,7 @@
     <p class="sidebar-card-value" id="storage-used">读取中…</p>
     <p class="sidebar-card-hint">清缓存不影响已下载文件</p>
   </div>
+  <div class="privacy-note" aria-label="本机受控说明"><svg aria-hidden="true"><use href="#i-shield"/></svg><span>任务与媒体全部留在本机<br>不上传 · 不收集 · 无需账号</span></div>
   <div class="sidebar-bottom">
     <button class="nav-button" data-open-settings aria-label="设置" title="设置"><svg><use href="#i-settings"/></svg><span>设置</span></button>
     <button class="nav-button" data-open-folder aria-label="打开下载目录" title="打开所有下载内容的总目录"><svg><use href="#i-folder"/></svg><span>打开下载目录</span></button>
@@ -58,8 +69,14 @@
     </div>
   </header>
   <section id="composer" class="composer" aria-labelledby="hero-title">
+    <div class="archive-hero">
+      <p class="eyebrow">Local Archive · 本机</p>
+      <h2 id="hero-title">把喜欢的内容，留在本机。</h2>
+      <p>粘贴分享链接，拾影会自动识别平台、保存原始画质，并按作者与日期归档。</p>
+    </div>
     <div class="section-head">
-      <div><h2 id="hero-title">添加下载</h2><p>粘贴分享链接或整段文案，自动识别平台；一次最多 50 条。</p></div>
+      <div><h2>添加下载</h2><p>粘贴分享链接或整段文案，自动识别平台；一次最多 50 条。</p></div>
+      <button id="composer-toggle" class="composer-toggle" type="button" aria-expanded="true">收起引导</button>
     </div>
     <form id="link-form" class="input-card">
       <div class="input-label"><label for="share-input"><svg><use href="#i-link"/></svg>分享链接</label><button id="paste-button" class="text-button" type="button">粘贴</button></div>
@@ -68,6 +85,8 @@
         <span id="form-message-text"></span>
         <button type="button" id="form-message-close" class="form-message-close" aria-label="关闭提示">×</button>
       </div>
+      <div id="link-insights" class="link-insights" role="status" hidden></div>
+      <div id="link-invalid-list" class="link-invalid-list" role="note" hidden></div>
       <div class="composer-bar">
         <div class="save-path"><svg><use href="#i-folder"/></svg><span>保存至</span><strong id="save-path" title="下载保存目录">读取中…</strong><button class="text-button" data-open-settings type="button">更改</button></div>
         <div class="composer-actions"><kbd>Ctrl ↵</kbd><button id="preview-button" class="secondary" type="button" disabled><span>预览选集</span></button><button id="submit-button" class="primary" type="submit" disabled><svg><use href="#i-download"/></svg><span>解析并下载</span></button></div>
@@ -84,7 +103,7 @@
       <small>支持视频与图文作品 · 点击图标打开官网</small>
     </div>
   </section>
-  <section id="tasks-section" class="tasks-section" data-view="home" aria-labelledby="tasks-title">
+  <section id="tasks-section" class="tasks-section" data-view="home" data-list-state="loading" aria-labelledby="tasks-title">
     <div class="tasks-heading">
       <div class="tasks-heading-copy"><h2 id="tasks-title">最近任务</h2><p id="task-scope">最近添加的下载，完成后的内容可在“已完成”中查找。</p></div>
       <div class="task-tools">
@@ -108,20 +127,34 @@
       <label class="batch-select"><input id="select-visible" type="checkbox">全选当前结果</label><span id="completed-selection-count" role="status">已选 0 条</span><span class="batch-note">仅移除记录，不删除本地文件</span><button id="remove-selected" class="secondary" type="button" disabled>移除所选记录</button><button id="exit-management" class="text-button" type="button">退出管理</button>
     </div>
     <div id="list-error" class="list-error" role="alert" hidden></div>
+    <div id="offline-panel" class="offline-panel" role="alert" hidden>
+      <svg aria-hidden="true"><use href="#i-alert"/></svg>
+      <div><h3>暂时无法读取任务</h3><p>本机服务没有响应。已显示最后一次成功读取的内容，重新连接后会自动更新。</p></div>
+      <button id="offline-retry" class="secondary" type="button">重新连接</button>
+    </div>
+    <div class="loading-skeleton" aria-hidden="true"><div class="skeleton-row"></div><div class="skeleton-row"></div><div class="skeleton-row"></div></div>
     <div id="task-list" aria-live="polite" aria-relevant="additions"></div>
-    <div id="empty-state" class="empty-state"><div class="empty-icon"><svg><use href="#i-download"/></svg></div><h3>从一条喜欢的链接开始</h3><p>粘贴上方分享链接，下载任务会出现在这里。</p><button id="empty-action" class="text-button">添加第一个下载</button></div>
+    <div id="empty-state" class="empty-state"><img id="empty-illustration" class="empty-illustration" src="/static/media/empty-first.webp" alt=""><div class="empty-icon"><svg><use href="#i-download"/></svg></div><h3>从一条喜欢的链接开始</h3><p>粘贴上方分享链接，下载任务会出现在这里。</p><button id="empty-action" class="text-button">添加第一个下载</button></div>
     <footer class="task-footer"><span id="task-summary">正在读取任务…</span><span id="task-footer-note">文件保存在本机</span></footer>
   </section>
 </main>
+<nav class="mobile-tabs" aria-label="移动端主导航">
+  <button class="nav-button selected" data-view="home" aria-current="page" aria-label="收集"><svg><use href="#i-collect"/></svg><span>收集</span></button>
+  <button class="nav-button" data-view="tasks" aria-label="进度"><svg><use href="#i-progress"/></svg><span>进度</span><span class="count">0</span></button>
+  <button class="nav-button" data-view="completed" aria-label="资料库"><svg><use href="#i-grid"/></svg><span>资料库</span></button>
+  <button class="nav-button" data-open-settings aria-label="设置"><svg><use href="#i-settings"/></svg><span>设置</span></button>
+</nav>
 <dialog id="settings-dialog" aria-labelledby="settings-title"><form id="settings-form">
   <div class="dialog-heading"><div><h2 id="settings-title">下载设置</h2><p>保存后应用于新建任务。</p></div><button class="icon-button" type="button" data-close-dialog aria-label="关闭设置"><svg><use href="#i-close"/></svg></button></div>
-  <p id="environment-status" class="field-help" role="status">正在检查运行环境…</p>
+  <p id="environment-status" class="field-help env-status" role="status">正在检查运行环境…</p>
   <div class="settings-section">
+    <p class="settings-group-label">常规</p>
     <label class="field-label" for="directory">保存目录</label>
     <div class="directory-field"><input id="directory" required autocomplete="off" spellcheck="false"><button id="choose-directory" class="secondary" type="button" hidden>选择文件夹</button></div>
     <p class="field-help">按平台、作者归档；图文作品另设作品文件夹。</p>
   </div>
   <div class="settings-section">
+    <p class="settings-group-label">登录态</p>
     <label class="checkbox-row"><span><strong>使用 Chrome 登录态</strong><small>需要登录的内容可开启。请先完全退出 Chrome 后重试。</small></span><input id="use-cookies" type="checkbox" role="switch"></label>
     <label class="field-label" for="profile">Chrome 个人资料文件夹（可选）</label>
     <input id="profile" placeholder="留空自动选择，例如 Default、Profile 1" spellcheck="false" pattern="Default|Profile [1-9][0-9]*" autocomplete="off">
@@ -133,8 +166,15 @@
     <div class="cookie-actions"><button id="wechat-login" class="secondary" type="button">扫码登录元宝</button><button id="save-cookie" class="secondary" type="button">保存登录态</button><button id="clear-cookie" class="text-button" type="button">清除登录态</button></div>
   </details>
   <div class="settings-section cache-section">
+    <p class="settings-group-label">存储</p>
     <div class="section-line"><div><strong>下载缓存</strong><p class="field-help">失败或暂停的任务会保留可续传的临时文件。</p></div><div class="cache-actions"><span id="cache-size">读取中…</span><button id="clear-cache" class="secondary" type="button">清理缓存</button></div></div>
     <p id="cache-state" class="field-help"></p>
+    <p class="field-help">关闭拾影窗口后，已创建的任务仍会在本机后台执行；需要完全退出时使用下方「完全退出」，或运行「停止拾影.bat」。任务、凭据与媒体文件都留在本机，不上传云端。</p>
+  </div>
+  <div class="settings-section exit-section">
+    <p class="settings-group-label">退出</p>
+    <div class="section-line"><div><strong>完全退出拾影</strong><p class="field-help">停止本机服务并关闭桌面窗口。关闭窗口本身不会停止下载，只有完全退出才会释放端口与后台进程。</p></div><button id="full-exit" class="secondary" type="button">完全退出</button></div>
+    <p id="exit-state" class="field-help" hidden></p>
   </div>
   <p id="settings-message" class="form-message" role="status"></p>
   <div class="dialog-footer"><button class="secondary" type="button" data-close-dialog>取消</button><button id="save-settings" class="primary" type="submit">保存设置</button></div>

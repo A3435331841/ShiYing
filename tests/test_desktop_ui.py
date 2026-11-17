@@ -111,6 +111,24 @@ def test_new_home_is_wired_and_public_downloads_default_to_d_drive():
     assert main.manager.downloader_config.temporary_root == str(main.PROJECT_ROOT / 'cache')
 
 
+def test_full_exit_control_is_wired():
+    """图形化完全退出：设置弹窗有控件，桌面桥与浏览器降级文案都接好。"""
+    from launch_shiying import DesktopAPI
+    client = TestClient(main.app, base_url="http://localhost")
+    page = client.get('/').text
+    assert 'id="full-exit"' in page and 'id="exit-state"' in page
+    assert '完全退出拾影' in page
+    home = (Path(main.__file__).resolve().parent / 'static' / 'home.js').read_text('utf-8')
+    assert 'async function fullExit' in home
+    assert 'quit_app' in home
+    # 浏览器直连模式（无 pywebview 桥）必须给出可执行的降级指引。
+    assert '停止拾影.bat' in home and 'scripts/unix/stop.sh' in home
+    assert hasattr(DesktopAPI, 'quit_app')
+    launcher = (Path(__file__).resolve().parents[1] / 'launch_shiying.py').read_text('utf-8')
+    assert 'def quit_app' in launcher
+    assert 'StopRefusedError' in launcher
+
+
 def test_completed_file_size_comes_from_final_files(tmp_path):
     from app.models import DownloadJob, DownloadItem, Platform, SourceKind, ItemStatus
     final = tmp_path / 'merged.mp4'

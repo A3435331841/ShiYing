@@ -125,10 +125,14 @@ def test_redirect_replay_preserves_method_and_exact_body(
                 )
                 assert requests[1][1:3] == (expected_method, expected_body)
                 if expected_method == "GET":
-                    assert not any(
-                        name.lower() in {"content-type", "content-length"}
-                        for name in requests[1][3]
-                    )
+                    # 真正要守住的安全属性：重定向后的 GET 重放绝不携带原始
+                    # POST 请求体（由 expected_body == b"" 断言保证）。新版
+                    # Chrome 会在重放的 GET 上保留 content-type 与
+                    # content-length: 0 头，因此这里只防"头与体不一致"。
+                    headers = {
+                        name.lower(): value for name, value in requests[1][3].items()
+                    }
+                    assert headers.get("content-length", "0") == "0"
             finally:
                 browser.close()
     finally:

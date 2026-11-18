@@ -17,3 +17,11 @@ The Shiying desktop shell, Chinese workspace UI and local WeChat Channels adapte
 The Channels share-link flow was referenced from ltaoo/wx_channels_download v261106, internal/workers/sph/worker.js. This distribution implements its own Python adapter and does not include hardcoded third-party account credentials or the upstream playback capture/decryption channel. The availability of that flow has not been verified with a configured user session on this machine.
 
 For Yuanbao response field names (`h264VideoInfo`, `h265VideoInfo`, and `decodeKey`), the adapter was checked against [oliver-zch/wx-video-channel-download](https://github.com/oliver-zch/wx-video-channel-download), which is distributed under MIT. This application implements its own validation and media selection; the compatibility of these fields still requires a real authenticated sample.
+
+## Optional Agent-Reach integration
+
+When an `agent-reach` CLI is already installed on the user's machine, Shiying may
+invoke it for Bilibili / YouTube / Xiaohongshu searches. Agent-Reach
+(https://github.com/Panniantong/Agent-Reach) is an independent MIT-licensed
+project; its code is **not** bundled or copied into this distribution. Shiying
+falls back to its own built-in backends when the CLI is absent or fails.

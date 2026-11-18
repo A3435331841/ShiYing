@@ -121,6 +121,55 @@ class MediaDownloader(
         self.config = config or DownloaderConfig()
         self.discovery_callback = discovery_callback
         self._douyin_probe_context = threading.local()
+    # AI 搜索依赖的 yt-dlp 内置搜索 extractor；快手/抖音/小红书走浏览器拦截，
+    # 不在此处（见 app/search/backends/browser.py）。
+    _SEARCH_PREFIXES = {
+        Platform.BILIBILI: "bilisearch",
+        Platform.YOUTUBE: "ytsearch",
+    }
+    def search(self, query: str, platform: Platform, limit: int = 10) -> list[dict[str, Any]]:
+        """按关键词搜索平台作品，返回 yt-dlp 扁平条目（不做逐条完整解析）。
+
+        Args:
+            query: 搜索关键词（各平台已定制过的短词）。
+            platform: 仅支持 BILIBILI / YOUTUBE（其余平台返回 DiscoveryError）。
+            limit: 返回条数上限，内部裁剪到 1..30。
+
+        Returns:
+            原样条目字典列表；字段名由 yt-dlp extractor 决定，调用方负责规范化。
+        """
+        query = (query or "").strip()
+        if not query:
+            raise DiscoveryError(
+                "搜索关键词为空", issue_code=SiteIssueCode.LOCAL_CONFIGURATION
+            )
+        prefix = self._SEARCH_PREFIXES.get(platform)
+        if prefix is None:
+            raise DiscoveryError(
+                f"{platform.value} 不支持 yt-dlp 搜索",
+                issue_code=SiteIssueCode.LOCAL_CONFIGURATION,
+            )
+        limit = max(1, min(int(limit), 30))
+        pseudo_url = f"{prefix}{limit}:{query}"
+        logger = _YdlLogger(None)
+
+        def operation(use_cookies: bool) -> list[dict[str, Any]]:
+            options = self._base_options(use_cookies)
+            options.update(
+                {
+                    "skip_download": True,
+                    "extract_flat": "in_playlist",
+                    "playlistend": limit,
+                    "ignoreerrors": False,
+                    "logger": logger,
+                }
+            )
+            with YoutubeDL(options) as ydl:
+                info = ydl.extract_info(pseudo_url, download=False)
+            entries = (info or {}).get("entries") or []
+            return [entry for entry in entries if isinstance(entry, dict)]
+        entries, _ = self._run_with_cookie_fallback(operation, url=pseudo_url)
+        return entries[:limit]
     def _xiaohongshu_browser_cookies_enabled(self) -> bool:
         if self.config.cookie_browser is None:
             return False

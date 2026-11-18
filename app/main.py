@@ -52,6 +52,10 @@ from .task_manager import (
     JobBusyError,
 )
 from .engine.common import safe_external_error_message
+from .search.cookies import SearchCookieStore
+from .search.key_store import SearchKeyStore
+from .search.routes import build_search_router
+from .search.service import SearchConfig
 from .xiaohongshu import (
     is_trusted_xiaohongshu_note_url,
     is_trusted_xiaohongshu_profile_url,
@@ -91,6 +95,10 @@ class AppConfig(BaseModel):
     download_dir: str = str(DEFAULT_DOWNLOAD_DIR)
     use_chrome_cookies: bool = False
     chrome_profile: str | None = None
+    # AI 搜索：非敏感配置进本模型；API Key 单独 DPAPI 存储（data/llm-api-key.txt）。
+    ai_search_enabled: bool = True
+    ai_search_base_url: str = "https://api.agnes-ai.cn/v1"
+    ai_search_model: str = "agnes-3.0-flash"
 
     @field_validator("download_dir")
     @classmethod
@@ -102,6 +110,29 @@ class AppConfig(BaseModel):
         if not path.is_absolute():
             path = PROJECT_ROOT / path
         return str(path.resolve())
+
+    @field_validator("ai_search_base_url")
+    @classmethod
+    def validate_ai_search_base_url(cls, value: str) -> str:
+        value = (value or "").strip()
+        if not value:
+            return "https://api.agnes-ai.cn/v1"
+        parsed = urlsplit(value)
+        if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+            raise ValueError("AI 搜索 base_url 必须是 http(s) 地址")
+        if parsed.username or parsed.password:
+            raise ValueError("AI 搜索 base_url 不允许包含账号密码")
+        return value.rstrip("/")
+
+    @field_validator("ai_search_model")
+    @classmethod
+    def validate_ai_search_model(cls, value: str) -> str:
+        value = (value or "").strip()
+        if not value:
+            return "agnes-3.0-flash"
+        if len(value) > 80 or any(ch.isspace() for ch in value):
+            raise ValueError("AI 搜索模型名不合法")
+        return value
 
 
 class CreateJobRequest(BaseModel):
@@ -1356,4 +1387,45 @@ def index() -> HTMLResponse:
 
 from .wechat import router as wechat_router
 app.include_router(wechat_router)
+
+
+# AI 搜索：非敏感配置随 AppConfig 持久化；密钥独立 DPAPI 存储，只写不回显。
+SEARCH_KEY_PATH = DATA_DIR / "llm-api-key.txt"
+SEARCH_KEY_STORE = SearchKeyStore(SEARCH_KEY_PATH)
+SEARCH_COOKIE_PATH = DATA_DIR / "search-cookies.txt"
+SEARCH_COOKIE_STORE = SearchCookieStore(SEARCH_COOKIE_PATH)
+SEARCH_PROFILE_DIR = DATA_DIR / "search-profile"
+
+
+def _search_runtime_config() -> SearchConfig:
+    current = get_config()
+    return SearchConfig(
+        enabled=current.ai_search_enabled,
+        base_url=current.ai_search_base_url,
+        model=current.ai_search_model,
+        use_chrome_cookies=current.use_chrome_cookies,
+        chrome_profile=current.chrome_profile,
+    )
+
+
+def _search_engine_factory() -> MediaDownloader:
+    current = get_config()
+    return MediaDownloader(
+        DownloaderConfig(
+            # DownloaderConfig 默认 "chrome"；公开搜索默认匿名，避免每次都读 Cookie。
+            cookie_browser="chrome" if current.use_chrome_cookies else None,
+            cookie_profile=current.chrome_profile,
+        )
+    )
+
+
+app.include_router(
+    build_search_router(
+        config_provider=_search_runtime_config,
+        key_store=SEARCH_KEY_STORE,
+        engine_factory=_search_engine_factory,
+        cookie_store=SEARCH_COOKIE_STORE,
+        profile_dir=SEARCH_PROFILE_DIR,
+    )
+)
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")

@@ -12,7 +12,7 @@ from pathlib import Path
 
 
 APP_ID = "shiying-local-downloader"
-APP_VERSION = "0.3.1"
+APP_VERSION = "0.4.0"
 
 
 def _is_frozen() -> bool:

@@ -6,13 +6,17 @@
     isActive: job => ['queued', 'discovering', 'capturing', 'downloading', 'postprocessing', 'cancelling'].includes(job.status),
     needsAction: job => ['partial', 'failed', 'needs_auth', 'interrupted', 'cancelled'].includes(job.status)
   });
-  const state = { jobs: new Map(), deleted: new Set(), pendingRemoval: [], pendingSubmit: null, config: null, filter: 'all', view: 'home', ready: false, everLoaded: false, refreshSettled: false, busy: false, refreshing: false, detailId: null, eventSource: null, sseUp: false, recovery: null, query: '', queries: {home: '', tasks: '', completed: ''}, mediaFilter: 'all', platformFilter: 'all', sortOrder: 'newest', manageCompleted: false, selectedCompleted: new Set(), visibleCompleted: [], emptyAction: 'add', cacheCheckedAt: 0 };
+  const state = { jobs: new Map(), deleted: new Set(), pendingRemoval: [], pendingSubmit: null, config: null, filter: 'all', view: 'home', ready: false, everLoaded: false, refreshSettled: false, busy: false, refreshing: false, detailId: null, eventSource: null, sseUp: false, recovery: null, query: '', queries: {home: '', tasks: '', completed: ''}, mediaFilter: 'all', platformFilter: 'all', sortOrder: 'newest', manageCompleted: false, selectedCompleted: new Set(), visibleCompleted: [], emptyAction: 'add', cacheCheckedAt: 0, searchHits: [], searchBusy: false, searchRequestId: null };
   const REQUEST_TIMEOUT_MS = 20000;
   // Preview runs a full discovery, and scanning a profile can legitimately take
   // minutes; the QR login flow waits up to five minutes for the user. Those are
   // not the same budget as a normal settings or list request.
   const PREVIEW_TIMEOUT_MS = 240000;
   const LOGIN_TIMEOUT_MS = 360000;
+  // AI 搜索要串行跑多个平台（含无头浏览器），比普通请求预算长得多。
+  const SEARCH_TIMEOUT_MS = 90000;
+  let searchImageDataUrl = '';
+  let searchStatus = null;
   const platforms = { douyin: '抖音', 'selected-douyin': '抖音精选', kuaishou: '快手', xiaohongshu: '小红书', bilibili: 'B站', wechat: '视频号', youtube: 'YouTube' };
   const canonicalPlatform = value => value === 'xhs' ? 'xiaohongshu' : value === 'bili' ? 'bilibili' : value;
   const labels = { queued: '排队中', discovering: '解析中', capturing: '等待微信播放', downloading: '下载中', postprocessing: '正在合并', completed: '已完成', partial: '部分完成', failed: '下载失败', needs_auth: '需要登录', cancelled: '已取消', cancelling: '正在取消', interrupted: '已中断', paused: '已暂停' };
@@ -70,6 +74,13 @@
       failedCovers.delete(id);
       render();
     }
+  };
+  // 搜索结果缩略图：只负责显示/回退，不依赖任务状态；失败时露出占位层。
+  window._onSearchCoverLoad = (img) => {
+    if (img) img.classList.add('loaded');
+  };
+  window._onSearchCoverError = (img) => {
+    if (img) img.remove();
   };
 
   let formMessageTimer = null;
@@ -667,6 +678,232 @@
     button.disabled = false; button.textContent = '完全退出';
   }
 
+  // ---- AI 搜索 --------------------------------------------------------
+  async function loadSearchStatus(force = false) {
+    if (searchStatus && !force) return searchStatus;
+    try { searchStatus = await api('/api/search/status'); } catch { searchStatus = null; }
+    return searchStatus;
+  }
+  function renderSearchPlatforms(status) {
+    const box = $('#search-platforms'); if (!box) return;
+    const available = status?.platforms || [];
+    const blocked = status?.unsearchable || {};
+    box.innerHTML = [
+      ...available.map(p => `<label class="search-platform"><input type="checkbox" value="${escape(p.value)}" checked><span>${escape(p.label)}</span></label>`),
+      ...Object.entries(blocked).map(([value, info]) => `<label class="search-platform disabled" title="${escape(info.reason || '')}"><input type="checkbox" value="${escape(value)}" disabled><span>${escape(info.label || value)}</span></label>`)
+    ].join('');
+  }
+  function selectedSearchPlatforms() {
+    return [...document.querySelectorAll('#search-platforms input[type="checkbox"]:checked:not(:disabled)')].map(input => input.value);
+  }
+  async function openSearch() {
+    const dialog = $('#search-dialog'); if (!dialog) return;
+    $('#search-results-section').hidden = true;
+    $('#search-results').innerHTML = '';
+    $('#search-message').textContent = '';
+    $('#search-selected-count').textContent = '0';
+    $('#search-download-selected').disabled = true;
+    $('#search-image-state').textContent = '';
+    const note = $('#search-plan-note'); note.hidden = true; note.textContent = '';
+    dialog.showModal();
+    const status = await loadSearchStatus(true);
+    renderSearchPlatforms(status);
+    if (status) {
+      note.hidden = false;
+      note.textContent = status.key_configured
+        ? `AI 已就绪（${status.model}${status.agent_reach?.available ? '；Agent-Reach 已安装' : ''}）`
+        : '未配置 AI Key：将直接使用关键词搜索，可在设置中配置 Agnes 免费 Key';
+      $('#search-no-ai').checked = !status.enabled || !status.key_configured;
+    }
+  }
+  function bindSearchImage() {
+    const file = $('#search-image-file'); if (!file) return;
+    file.addEventListener('change', () => {
+      const chosen = file.files && file.files[0];
+      if (!chosen) { searchImageDataUrl = ''; $('#search-image-state').textContent = ''; return; }
+      if (chosen.size > 8 * 1024 * 1024) {
+        searchImageDataUrl = '';
+        $('#search-image-state').textContent = '图片超过 8MB，请压缩后再试。';
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        searchImageDataUrl = String(reader.result || '');
+        $('#search-image-state').textContent = `已选择：${chosen.name}`;
+      };
+      reader.onerror = () => { searchImageDataUrl = ''; $('#search-image-state').textContent = '读取图片失败。'; };
+      reader.readAsDataURL(chosen);
+    });
+  }
+  async function submitSearch() {
+    if (state.searchBusy) return;
+    const query = ($('#search-query')?.value || '').trim();
+    const imageUrl = ($('#search-image-url')?.value || '').trim();
+    const image = searchImageDataUrl || imageUrl;
+    if (!query && !image) { $('#search-message').textContent = '请输入描述或选择图片。'; return; }
+    const platforms = selectedSearchPlatforms();
+    if (!platforms.length) { $('#search-message').textContent = '请至少选择一个平台。'; return; }
+    const limit = Number($('#search-limit')?.value || 10);
+    const button = $('#search-submit');
+    state.searchBusy = true; button.disabled = true; button.textContent = '搜索中…';
+    $('#search-message').textContent = '';
+    const requestId = String(Date.now());
+    state.searchRequestId = requestId;
+    try {
+      const data = await api('/api/search', 'POST', {
+        query: query || null,
+        image: image || null,
+        platforms,
+        limit,
+        ai_mode: !$('#search-no-ai')?.checked,
+        request_id: requestId
+      }, { timeoutMs: SEARCH_TIMEOUT_MS });
+      if (state.searchRequestId !== requestId) return;
+      renderSearchResults(data);
+    } catch (error) {
+      if (state.searchRequestId === requestId) $('#search-message').textContent = localize(error.message);
+    } finally {
+      state.searchBusy = false; button.disabled = false; button.textContent = '搜索';
+    }
+  }
+  function formatSearchDuration(seconds) {
+    const total = Math.max(0, Number(seconds) || 0);
+    const minutes = Math.floor(total / 60), rest = total % 60;
+    return `${minutes}:${String(rest).padStart(2, '0')}`;
+  }
+  function renderSearchResults(data) {
+    state.searchHits = Array.isArray(data.hits) ? data.hits : [];
+    const section = $('#search-results-section'); section.hidden = false;
+    const summary = (data.results || []).map(result => {
+      const label = platforms[result.platform] || result.platform;
+      return result.issue ? `${label}：${localize(result.issue.message)}` : `${label} ${result.hits.length} 条`;
+    });
+    $('#search-results-meta').textContent = `共 ${state.searchHits.length} 个结果` + (summary.length ? ` · ${summary.join(' · ')}` : '');
+    const note = $('#search-plan-note');
+    if (data.plan?.fallback_reason) { note.hidden = false; note.textContent = data.plan.fallback_reason; }
+    else if (data.plan?.description) { note.hidden = false; note.textContent = `AI 理解：${data.plan.description}`; }
+    $('#search-results').innerHTML = state.searchHits.map((hit, index) => {
+      const label = platforms[hit.platform] || hit.platform;
+      const cover = hit.cover_url
+        ? `/api/search/thumbnail?platform=${encodeURIComponent(hit.platform)}&url=${encodeURIComponent(hit.cover_url)}`
+        : '';
+      const meta = [label, hit.author, hit.duration_seconds ? formatSearchDuration(hit.duration_seconds) : ''].filter(Boolean).map(escape).join(' · ');
+      return `<label class="preview-item search-item">
+        <input type="checkbox" value="${index}" checked>
+        <span class="search-thumb"><span class="media-placeholder"><svg><use href="#i-film"/></svg></span>${cover ? `<img src="${escape(cover)}" alt="" loading="lazy" onload="window._onSearchCoverLoad&&window._onSearchCoverLoad(this)" onerror="window._onSearchCoverError&&window._onSearchCoverError(this)">` : ''}</span>
+        <span class="search-item-body"><strong>${escape(hit.title || '未命名作品')}</strong><small>${meta}</small></span>
+      </label>`;
+    }).join('');
+    $('#search-results').hidden = state.searchHits.length === 0;
+    if (!state.searchHits.length) {
+      $('#search-message').textContent = '没有找到结果，试试换个描述或减少平台限制。';
+    } else if (section.scrollIntoView) {
+      // 结果列表在表单下方：搜索完成后直接带到可视区域，避免用户找不到。
+      section.scrollIntoView({ block: 'nearest' });
+    }
+    updateSearchCount();
+  }
+  function updateSearchCount() {
+    const boxes = [...document.querySelectorAll('#search-results input[type="checkbox"]')];
+    const checked = boxes.filter(box => box.checked).length;
+    $('#search-selected-count').textContent = String(checked);
+    $('#search-download-selected').disabled = checked === 0;
+    boxes.forEach(box => { const item = box.closest('.search-item'); if (item) item.classList.toggle('selected', box.checked); });
+  }
+  function setSearchSelection(checked) {
+    document.querySelectorAll('#search-results input[type="checkbox"]').forEach(box => { box.checked = checked; });
+    updateSearchCount();
+  }
+  async function downloadSearchSelected() {
+    const boxes = [...document.querySelectorAll('#search-results input[type="checkbox"]:checked')];
+    if (!boxes.length) return;
+    const button = $('#search-download-selected');
+    button.disabled = true;
+    let created = 0, skipped = 0, failed = 0;
+    for (const box of boxes) {
+      const hit = state.searchHits[Number(box.value)];
+      if (!hit) continue;
+      try {
+        const existing = await api('/api/jobs/exists?url=' + encodeURIComponent(hit.source_url));
+        if (existing && existing.exists) { skipped += 1; continue; }
+        await api('/api/jobs', 'POST', { url: hit.source_url, auto_start: true });
+        created += 1;
+      } catch (error) {
+        failed += 1;
+      }
+    }
+    const parts = [`已创建 ${created} 个任务`];
+    if (skipped) parts.push(`跳过 ${skipped} 个已有任务`);
+    if (failed) parts.push(`${failed} 个创建失败`);
+    $('#search-message').textContent = parts.join('，') + '。';
+    if (created) { toast(`已添加 ${created} 个下载任务`); await refresh(); }
+    updateSearchCount();
+  }
+  async function saveSearchKey() {
+    const input = $('#ai-search-key');
+    const value = (input?.value || '').trim();
+    if (!value) { toast('请输入要保存的 API Key', true); return; }
+    try {
+      const result = await api('/api/search/key', 'POST', { api_key: value });
+      input.value = '';
+      $('#ai-search-key-state').textContent = result.configured ? '已配置（DPAPI 加密保存，不回显）' : '未配置';
+      searchStatus = null;
+      toast('AI Key 已保存');
+    } catch (error) { toast(localize(error.message), true); }
+  }
+  function renderSearchCookieState(cookies, login) {
+    const el = $('#search-cookie-state'); if (!el) return;
+    const labels = { douyin: '抖音', kuaishou: '快手', xiaohongshu: '小红书' };
+    const loginState = login || {};
+    const entries = Object.keys(labels).map(platform => {
+      const loggedIn = !!loginState[platform];
+      const imported = Number(cookies?.[platform]?.count || 0);
+      return `${labels[platform]} ${loggedIn ? '已登录' : (imported ? `已导入 ${imported} 条` : '未登录')}`;
+    });
+    const any = Object.values(loginState).some(Boolean) || Object.values(cookies || {}).some(info => info.count > 0);
+    el.textContent = entries.join(' · ') + (any ? '' : '。匿名搜索会被拦截，建议先点对应平台登录。');
+  }
+  async function loginSearchPlatform(platform) {
+    const labels = { douyin: '抖音', kuaishou: '快手', xiaohongshu: '小红书' };
+    const stateEl = $('#search-cookie-state');
+    const buttons = [...document.querySelectorAll('[data-search-login]')];
+    buttons.forEach(button => { button.disabled = true; });
+    if (stateEl) stateEl.textContent = `等待${labels[platform] || platform}登录…（在弹出窗口扫码，最长 5 分钟）`;
+    try {
+      await api(`/api/search/login/${encodeURIComponent(platform)}`, 'POST', {}, { timeoutMs: LOGIN_TIMEOUT_MS });
+      toast(`${labels[platform] || platform}登录态已保存`);
+      searchStatus = null;
+      const status = await loadSearchStatus(true);
+      if (status) renderSearchCookieState(status.cookies || {}, status.login || {});
+    } catch (error) {
+      if (stateEl) stateEl.textContent = localize(error.message);
+      toast(localize(error.message), true);
+    } finally {
+      buttons.forEach(button => { button.disabled = false; });
+    }
+  }
+  async function importSearchCookies() {
+    const button = $('#import-search-cookies'); if (!button) return;
+    const stateEl = $('#search-cookie-state');
+    const previous = button.textContent;
+    button.disabled = true; button.textContent = '导入中…';
+    if (stateEl) stateEl.textContent = '正在读取 Chrome 登录态…（Chrome 必须完全退出）';
+    try {
+      const result = await api('/api/search/cookies/import', 'POST', {}, { timeoutMs: 60000 });
+      const labels = { douyin: '抖音', kuaishou: '快手', xiaohongshu: '小红书' };
+      const imported = result.imported || {};
+      const parts = Object.entries(imported).map(([platform, count]) => `${labels[platform] || platform} ${count} 条`);
+      if (stateEl) stateEl.textContent = `已导入：${parts.join(' · ')}`;
+      searchStatus = null;
+      toast('搜索登录态已导入');
+    } catch (error) {
+      if (stateEl) stateEl.textContent = localize(error.message);
+      toast(localize(error.message), true);
+    } finally {
+      button.disabled = false; button.textContent = previous;
+    }
+  }
+
   function persistUiState() {
     try {
       localStorage.setItem(UI_STATE_KEY, JSON.stringify({view: state.view, filter: state.filter, mediaFilter: state.mediaFilter, platformFilter: state.platformFilter, sortOrder: state.sortOrder, query: state.query}));
@@ -993,11 +1230,23 @@
   }
   async function settings() {
     try {
-      const [config, wechat, environment, cache] = await Promise.all([
-        api('/api/config'), api('/api/wechat/status'), api('/api/environment').catch(() => null), api('/api/cache').catch(() => null)
+      const [config, wechat, environment, cache, search] = await Promise.all([
+        api('/api/config'), api('/api/wechat/status'), api('/api/environment').catch(() => null), api('/api/cache').catch(() => null), api('/api/search/status').catch(() => null)
       ]);
       state.config = config; $('#directory').value = config.download_dir; $('#use-cookies').checked = config.use_chrome_cookies; $('#profile').value = config.chrome_profile || '';
       $('#wechat-cookie').value = ''; $('#wechat-cookie-state').textContent = wechat.cookie_configured ? '已保存' : (wechat.chrome_fallback ? '未保存（下载时将尝试读取 Chrome 中的元宝登录态，需先完全退出 Chrome）' : '未配置'); $('#settings-message').textContent = '';
+      if (search) {
+        $('#ai-search-enabled').checked = !!search.enabled;
+        $('#ai-search-base-url').value = search.base_url || '';
+        $('#ai-search-model').value = search.model || '';
+        $('#ai-search-key').value = '';
+        $('#ai-search-key-state').textContent = search.key_configured ? '已配置（DPAPI 加密保存，不回显）' : '未配置：AI 搜索将退化为直接关键词';
+        const reach = search.agent_reach || {};
+        $('#agent-reach-state').textContent = reach.available
+          ? 'Agent-Reach 已安装：B站/YouTube/小红书优先走它的渠道'
+          : `Agent-Reach 未安装（可选）：${reach.install_hint || ''}`;
+        renderSearchCookieState(search.cookies || {}, search.login || {});
+      }
       const problems = environment?.checks?.filter(check => !check.ok) || [];
       $('#environment-status').textContent = environment ? (problems.length ? problems.map(check => check.message).join('\n') : '基础检查通过：已找到所需组件，保存目录可写。') : '暂时无法检查运行环境，请稍后重试。';
       $('#choose-directory').hidden = !window.pywebview?.api?.choose_directory;
@@ -1008,8 +1257,16 @@
   async function saveSettings(event) {
     event.preventDefault(); const button = $('#save-settings'); button.disabled = true; $('#settings-message').textContent = '';
     try {
-      state.config = await api('/api/config','PUT',{download_dir:$('#directory').value.trim(), use_chrome_cookies:$('#use-cookies').checked, chrome_profile:$('#profile').value.trim() || null});
+      state.config = await api('/api/config','PUT',{
+        download_dir:$('#directory').value.trim(),
+        use_chrome_cookies:$('#use-cookies').checked,
+        chrome_profile:$('#profile').value.trim() || null,
+        ai_search_enabled:$('#ai-search-enabled').checked,
+        ai_search_base_url:$('#ai-search-base-url').value.trim(),
+        ai_search_model:$('#ai-search-model').value.trim()
+      });
       $('#save-path').textContent = state.config.download_dir; $('#save-path').title = state.config.download_dir;
+      searchStatus = null;
       $('#settings-dialog').close(); toast('已保存，新任务将使用新的设置');
     } catch (error) { $('#settings-message').textContent = localize(error.message); } finally { button.disabled = false; }
   }
@@ -1098,6 +1355,18 @@
     if (sidebarClear) sidebarClear.addEventListener('click', () => clearCacheAction(sidebarClear));
     if ($('#full-exit')) $('#full-exit').addEventListener('click', fullExit);
     if ($('#preview-button')) $('#preview-button').addEventListener('click', openPreview);
+    $('#ai-search-button')?.addEventListener('click', openSearch);
+    $('#search-submit')?.addEventListener('click', submitSearch);
+    $('#search-select-all')?.addEventListener('click', () => setSearchSelection(true));
+    $('#search-unselect-all')?.addEventListener('click', () => setSearchSelection(false));
+    $('#search-results')?.addEventListener('change', updateSearchCount);
+    $('#search-download-selected')?.addEventListener('click', downloadSearchSelected);
+    $('#save-ai-key')?.addEventListener('click', saveSearchKey);
+    $('#import-search-cookies')?.addEventListener('click', importSearchCookies);
+    document.querySelectorAll('[data-search-login]').forEach(button => {
+      button.addEventListener('click', () => loginSearchPlatform(button.dataset.searchLogin));
+    });
+    bindSearchImage();
     if ($('#confirm-download-selected')) $('#confirm-download-selected').addEventListener('click', startPreviewDownload);
     if ($('#preview-select-all')) $('#preview-select-all').addEventListener('click', () => setPreviewSelection(true));
     if ($('#preview-unselect-all')) $('#preview-unselect-all').addEventListener('click', () => setPreviewSelection(false));

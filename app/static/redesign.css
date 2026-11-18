@@ -419,3 +419,32 @@ dialog { border-radius: var(--archive-radius); border-color: var(--archive-line)
 @media (min-width: 1221px) {
   .task-row { grid-template-columns: minmax(0, 1fr) 108px 130px auto; }
 }
+
+/* AI 搜索面板（v0.4.0）：复用预览项骨架，补缩略图与平台勾选布局 */
+#search-dialog { width: min(760px, 94vw); }
+#search-query { width: 100%; resize: vertical; font: inherit; color: var(--ink); background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+.search-image-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+.search-image-row input[type="text"], .search-image-row input:not([type]) { flex: 1 1 240px; }
+.search-platforms { display: flex; flex-wrap: wrap; gap: 8px 16px; margin: 10px 0 12px; }
+.search-platform { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink-2); }
+.search-platform.disabled { opacity: .45; cursor: not-allowed; }
+.search-options { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
+.search-options .checkbox-row { margin: 0; }
+.search-options select { width: auto; }
+.search-item { display: flex; align-items: center; gap: 10px; }
+.search-item.selected { background: var(--brand-soft); }
+.search-thumb { position: relative; flex: 0 0 84px; width: 84px; height: 56px; border-radius: 6px; overflow: hidden; background: var(--surface-3); display: block; }
+.search-thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity .2s ease; }
+.search-thumb img.loaded { opacity: 1; }
+.search-thumb .media-placeholder { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--ink-3); }
+.search-thumb .media-placeholder svg { width: 22px; height: 22px; }
+.search-item-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.search-item-body strong { font-size: 13px; line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.search-item-body small { color: var(--ink-3); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 空的消息条不渲染红色底：对话框内的 form-message 为空时应完全隐藏 */
+.form-message:empty { display: none; }
+
+/* 搜索登录态导入行 */
+.search-cookie-row { align-items: center; gap: 12px; margin-top: 10px; }
+.search-cookie-row .field-help { margin-top: 2px; }

@@ -89,7 +89,7 @@
       <div id="link-invalid-list" class="link-invalid-list" role="note" hidden></div>
       <div class="composer-bar">
         <div class="save-path"><svg><use href="#i-folder"/></svg><span>保存至</span><strong id="save-path" title="下载保存目录">读取中…</strong><button class="text-button" data-open-settings type="button">更改</button></div>
-        <div class="composer-actions"><kbd>Ctrl ↵</kbd><button id="preview-button" class="secondary" type="button" disabled><span>预览选集</span></button><button id="submit-button" class="primary" type="submit" disabled><svg><use href="#i-download"/></svg><span>解析并下载</span></button></div>
+        <div class="composer-actions"><kbd>Ctrl ↵</kbd><button id="ai-search-button" class="secondary" type="button"><svg><use href="#i-search"/></svg><span>AI 搜索</span></button><button id="preview-button" class="secondary" type="button" disabled><span>预览选集</span></button><button id="submit-button" class="primary" type="submit" disabled><svg><use href="#i-download"/></svg><span>解析并下载</span></button></div>
       </div>
     </form>
     <div class="platform-row" aria-label="已接入平台，点击打开官网">
@@ -165,6 +165,21 @@
     <input type="password" id="wechat-cookie" autocomplete="off" placeholder="留空不修改已保存的登录态">
     <div class="cookie-actions"><button id="wechat-login" class="secondary" type="button">扫码登录元宝</button><button id="save-cookie" class="secondary" type="button">保存登录态</button><button id="clear-cookie" class="text-button" type="button">清除登录态</button></div>
   </details>
+  <div class="settings-section ai-search-settings">
+    <p class="settings-group-label">AI 搜索</p>
+    <label class="checkbox-row"><span><strong>启用 AI 搜索</strong><small>用 Agnes（OpenAI 兼容）把描述或图片转成各平台搜索词</small></span><input id="ai-search-enabled" type="checkbox" role="switch"></label>
+    <label class="field-label" for="ai-search-base-url">API 地址</label>
+    <input id="ai-search-base-url" spellcheck="false" autocomplete="off" placeholder="https://api.agnes-ai.cn/v1">
+    <label class="field-label" for="ai-search-model">模型</label>
+    <input id="ai-search-model" spellcheck="false" autocomplete="off" placeholder="agnes-3.0-flash">
+    <label class="field-label" for="ai-search-key">API Key</label>
+    <div class="directory-field"><input type="password" id="ai-search-key" autocomplete="off" placeholder="留空不修改已保存的 Key"><button id="save-ai-key" class="secondary" type="button">保存 Key</button></div>
+    <p id="ai-search-key-state" class="field-help">读取中…</p>
+    <p id="agent-reach-state" class="field-help"></p>
+    <div class="section-line search-cookie-row"><div><strong>搜索登录态（抖音/快手/小红书）</strong><p class="field-help">匿名搜索会被验证码/风控拦截。点平台按钮，在弹出的窗口里扫码登录一次；登录态存入本机专用浏览器 Profile，之后搜索直接复用，不再依赖 Chrome。</p></div></div>
+    <div class="cookie-actions"><button class="secondary" type="button" data-search-login="douyin">抖音登录</button><button class="secondary" type="button" data-search-login="kuaishou">快手登录</button><button class="secondary" type="button" data-search-login="xiaohongshu">小红书登录</button><button id="import-search-cookies" class="text-button" type="button">从 Chrome 导入</button></div>
+    <p id="search-cookie-state" class="field-help">读取中…</p>
+  </div>
   <div class="settings-section cache-section">
     <p class="settings-group-label">存储</p>
     <div class="section-line"><div><strong>下载缓存</strong><p class="field-help">失败或暂停的任务会保留可续传的临时文件。</p></div><div class="cache-actions"><span id="cache-size">读取中…</span><button id="clear-cache" class="secondary" type="button">清理缓存</button></div></div>
@@ -182,6 +197,34 @@
 <dialog id="help-dialog" aria-labelledby="help-title"><div class="dialog-heading"><h2 id="help-title">开始使用拾影</h2><button class="icon-button" data-close-dialog aria-label="关闭帮助"><svg><use href="#i-close"/></svg></button></div><ol class="help-steps"><li><strong>复制分享链接</strong><p>支持抖音、抖音精选、快手、视频号、小红书、B站和 YouTube。可粘贴完整分享文案。</p></li><li><strong>解析并下载</strong><p>优先选择当前会话可获取的清晰度。任务列表实时显示进度，按平台、作者归档，图文作品单独收纳。</p></li><li><strong>遇到登录提示</strong><p>在设置中开启 Chrome 登录态；登录后完全退出 Chrome，再新建任务。视频号需单独配置元宝登录态，部分加密作品仍可能下载失败。</p></li></ol><p class="help-note">当前版本专注下载，暂不包含字幕与转写。仅下载你有权保存的内容。</p><div class="dialog-footer"><span>拾影 v__APP_VERSION__ · GPL-3.0</span><button class="primary" data-close-dialog>知道了</button></div></dialog>
 <dialog id="details-dialog" aria-labelledby="details-title"><div class="dialog-heading"><h2 id="details-title">任务详情</h2><button class="icon-button" type="button" data-close-dialog aria-label="关闭详情"><svg><use href="#i-close"/></svg></button></div><div id="details-content"></div><div id="details-actions" class="dialog-footer"><button class="secondary" type="button" data-close-dialog>关闭</button></div></dialog>
 <dialog id="preview-dialog" aria-labelledby="preview-title"><div class="dialog-heading"><h2 id="preview-title">作品解析预览</h2><button class="icon-button" type="button" data-close-dialog aria-label="关闭"><svg><use href="#i-close"/></svg></button></div><div class="preview-header"><p id="preview-meta" class="field-help"></p><div class="preview-actions"><button type="button" class="text-button" id="preview-select-all">全选</button><span class="divider"></span><button type="button" class="text-button" id="preview-unselect-all">全不选</button></div></div><div id="preview-items" class="preview-list"></div><p id="preview-message" class="form-message" role="status"></p><div class="dialog-footer"><button class="secondary" type="button" data-close-dialog>取消</button><button class="primary" id="confirm-download-selected" type="button">下载选中项 (<span id="selected-count">0</span>)</button></div></dialog>
+<dialog id="search-dialog" aria-labelledby="search-title">
+  <div class="dialog-heading"><div><h2 id="search-title">AI 搜索</h2><p>描述想找的内容或上传图片，在已接入平台中搜索候选作品。</p></div><button class="icon-button" type="button" data-close-dialog aria-label="关闭"><svg><use href="#i-close"/></svg></button></div>
+  <div class="settings-section search-form">
+    <label class="field-label" for="search-query">想找什么</label>
+    <textarea id="search-query" rows="2" maxlength="500" placeholder="例如：一只橘猫趴在键盘上睡觉的短视频，或者某个游戏的实况解说"></textarea>
+    <div class="search-image-row">
+      <label class="field-label" for="search-image-url">图片（可选）</label>
+      <input id="search-image-url" placeholder="https://… 图片链接，或上传本地图片" spellcheck="false" autocomplete="off">
+      <label class="text-button" for="search-image-file">上传本地图片</label>
+      <input id="search-image-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
+      <span id="search-image-state" class="field-help"></span>
+    </div>
+    <div class="search-platforms" id="search-platforms" aria-label="搜索平台"></div>
+    <div class="search-options">
+      <label class="checkbox-row"><span><strong>跳过 AI，直接关键词</strong><small>不调用 AI 理解层，把描述原样作为搜索词</small></span><input id="search-no-ai" type="checkbox" role="switch"></label>
+      <label class="field-label" for="search-limit">每平台条数</label>
+      <select id="search-limit"><option value="5">5</option><option value="10" selected>10</option><option value="15">15</option><option value="20">20</option></select>
+    </div>
+    <p id="search-plan-note" class="field-help" hidden></p>
+    <p id="search-message" class="form-message" role="status"></p>
+    <div class="dialog-footer"><button class="secondary" type="button" data-close-dialog>取消</button><button class="primary" id="search-submit" type="button">搜索</button></div>
+  </div>
+  <div id="search-results-section" hidden>
+    <div class="preview-header"><p id="search-results-meta" class="field-help"></p><div class="preview-actions"><button type="button" class="text-button" id="search-select-all">全选</button><span class="divider"></span><button type="button" class="text-button" id="search-unselect-all">全不选</button></div></div>
+    <div id="search-results" class="preview-list"></div>
+    <div class="dialog-footer"><button class="secondary" type="button" data-close-dialog>关闭</button><button class="primary" id="search-download-selected" type="button" disabled>下载选中项 (<span id="search-selected-count">0</span>)</button></div>
+  </div>
+</dialog>
 <dialog id="duplicate-dialog" aria-labelledby="duplicate-title"><div class="dialog-heading"><div><h2 id="duplicate-title">已存在相同任务</h2><p>相同的链接已经有下载记录，避免重复下载可以节省时间。</p></div><button class="icon-button" type="button" data-close-dialog aria-label="关闭"><svg><use href="#i-close"/></svg></button></div><div id="duplicate-list" class="duplicate-list"></div><p id="duplicate-message" class="form-message" role="status"></p><p class="duplicate-hint">说明：若选择「仍然下载」，本地已有的同名原文件会被保留；若新下载内容或规格不同，将自动另存为带有 (2) 等后缀的新文件（若本地已有完整同规格文件，系统将智能复用以节省流量）。</p><div class="dialog-footer"><button id="duplicate-skip" class="secondary" type="button">跳过这些链接</button><button id="duplicate-force" class="primary" type="button">仍然下载</button></div></dialog>
 <dialog id="remove-dialog" aria-labelledby="remove-title"><div class="dialog-heading"><h2 id="remove-title">移除任务记录</h2><button class="icon-button" type="button" data-close-dialog aria-label="关闭"><svg><use href="#i-close"/></svg></button></div><p id="remove-description"></p><p id="remove-message" class="form-message" role="status"></p><div class="dialog-footer"><button class="secondary" type="button" data-close-dialog>取消</button><button class="primary" id="confirm-remove" type="button">移除记录</button></div></dialog>
 <div id="toast-region" class="toast-region" role="status" aria-live="polite"></div>

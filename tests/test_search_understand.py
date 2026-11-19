@@ -85,6 +85,25 @@ def test_plan_keywords_parses_and_normalizes():
     assert plan.description == "橘猫短视频"
 
 
+def test_plan_keywords_uses_image_when_query_is_empty():
+    payload = {"keywords": {"bilibili": ["橘猫 图片"]}}
+    session = FakeSession(
+        [FakeResponse(payload=_chat_payload(json.dumps(payload, ensure_ascii=False)))]
+    )
+    plan = plan_keywords(
+        _client(session),
+        query="",
+        image="https://example.com/cat.jpg",
+        platform_values=["bilibili"],
+    )
+    assert plan.source == "ai"
+    assert plan.keywords["bilibili"] == ["橘猫 图片"]
+    assert len(session.calls) == 1
+    # 图片必须以 image_url 形式进入理解层请求，而不是被静默跳过。
+    messages = session.calls[0][1]["json"]["messages"]
+    assert messages[1]["content"][1]["image_url"]["url"] == "https://example.com/cat.jpg"
+
+
 def test_plan_keywords_repairs_invalid_json_once():
     session = FakeSession(
         [

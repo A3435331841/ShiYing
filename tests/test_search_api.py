@@ -2,16 +2,24 @@
 
 from __future__ import annotations
 
+import base64
 import sys
 from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import ValidationError
 
 from app import main
 from app.errors import DiscoveryError, SiteIssueCode
 from app.models import Platform
-from app.search.models import SearchHit, SearchPlan, SearchResponse
+from app.search.models import (
+    MAX_IMAGE_DATA_URI_CHARS,
+    SearchHit,
+    SearchPlan,
+    SearchRequest,
+    SearchResponse,
+)
 from app.search.routes import PLATFORM_LABELS, trusted_thumbnail_url
 
 
@@ -89,6 +97,32 @@ def test_search_rejects_empty_request_body(client):
     )
     assert response.status_code == 422
     assert "描述或图片" in response.json()["detail"]["message"]
+
+
+def test_search_accepts_image_data_uri_larger_than_8m_chars(client, monkeypatch):
+    # 7MB 原图 base64 后约 9.8MB 字符；旧的 8Mi 字符上限会误拒合法图片。
+    raw = b"\x89PNG\r\n\x1a\n" + b"\x00" * (7 * 1024 * 1024)
+    data_uri = "data:image/png;base64," + base64.b64encode(raw).decode("ascii")
+    assert len(data_uri) > 8 * 1024 * 1024
+
+    def fake_search(self, request):
+        assert request.image == data_uri
+        return SearchResponse(plan=SearchPlan(keywords={}), results=[], hits=[])
+
+    from app.search.service import SearchService
+
+    monkeypatch.setattr(SearchService, "search", fake_search)
+    response = client.post(
+        "/api/search", json={"image": data_uri, "platforms": ["bilibili"]}
+    )
+    assert response.status_code == 200
+
+
+def test_search_rejects_oversize_image_with_chinese_message():
+    data_uri = "data:image/png;base64," + "A" * MAX_IMAGE_DATA_URI_CHARS
+    with pytest.raises(ValidationError) as info:
+        SearchRequest(image=data_uri)
+    assert "图片超过 8MB 限制" in str(info.value)
 
 
 @pytest.mark.skipif(sys.platform != "win32", reason="密钥存储依赖 Windows DPAPI")

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -108,6 +109,11 @@ def test_xhs_parser_keeps_xsec_token_and_rejects_bad_ids():
     assert len(hits) == 1
     assert "xsec_token=ABC123" in hits[0].source_url
     assert hits[0].source_url.startswith("https://www.xiaohongshu.com/explore/64a1b2c3")
+
+
+def test_xhs_empty_items_is_a_valid_empty_result():
+    # items=[] 是平台正常返回的“没有结果”，不是解析失败或页面改版。
+    assert parse_hits(Platform.XIAOHONGSHU, {"data": {"items": []}}, "空", 5) == []
 
 
 def test_target_response_filters():
@@ -286,7 +292,10 @@ def test_browser_backend_shares_one_browser_for_many_platforms():
                 }
                 response_url = "https://www.douyin.com/aweme/v1/web/general/search/single/"
             else:
-                payload = {"data": {"items": []}}
+                # 这里要验证的是“单平台失败不阻塞其他平台”，必须用明确不是
+                # 搜索结果的响应；合法空结果（{"data": {"items": []}}）不能被
+                # 当成页面改版/登录失败的夹具。
+                payload = {"code": -100, "success": False}
                 response_url = "https://edith.xiaohongshu.com/api/sns/web/v1/search/notes"
             self.handlers["response"](FakeResponse(response_url, payload))
 
@@ -308,5 +317,209 @@ def test_browser_backend_shares_one_browser_for_many_platforms():
     )
     assert len(results[Platform.DOUYIN]) == 1
     assert results[Platform.XIAOHONGSHU] == []
-    assert Platform.XIAOHONGSHU in backend.last_issues
+    issue = backend.last_issues[Platform.XIAOHONGSHU]
+    assert isinstance(issue, DiscoveryError)
+    assert issue.issue_code is SiteIssueCode.SITE_RESPONSE_CHANGED
     assert browser.contexts == 2  # 一个浏览器实例，逐平台复用（每个平台一个上下文）
+
+
+def test_browser_backend_resets_last_issues_between_batches():
+    pages = [
+        FakePage(
+            FakeResponse(
+                "https://edith.xiaohongshu.com/api/sns/web/v1/search/notes",
+                {"code": -100, "success": False},
+            )
+        ),
+        FakePage(
+            FakeResponse(
+                "https://www.douyin.com/aweme/v1/web/general/search/single/",
+                {"data": [{"aweme_info": {"aweme_id": "7300000000000000005", "desc": "第二批"}}]},
+            )
+        ),
+    ]
+
+    class SequenceBrowser:
+        def new_context(self, **kwargs):
+            return FakeContext(pages.pop(0))
+
+        def close(self):
+            pass
+
+    backend = BrowserSearchBackend(browser_factory=SequenceBrowser, timeout_seconds=0.05)
+    backend.search_many([(Platform.XIAOHONGSHU, "第一批")], 3)
+    assert Platform.XIAOHONGSHU in backend.last_issues
+
+    second = backend.search_many([(Platform.DOUYIN, "第二批")], 3)
+    assert [hit.media_id for hit in second[Platform.DOUYIN]] == ["7300000000000000005"]
+    assert backend.last_issues == {}  # 新批次不能带上一批的失败记录
+
+
+def test_browser_backend_serializes_concurrent_searches():
+    guard = threading.Lock()
+    active = 0
+    peak = 0
+    entered = threading.Event()
+    release = threading.Event()
+
+    class GatedPage(FakePage):
+        def goto(self, url, **kwargs):
+            nonlocal active, peak
+            with guard:
+                active += 1
+                peak = max(peak, active)
+            entered.set()
+            assert release.wait(2), "并发搜索测试未能释放页面"
+            with guard:
+                active -= 1
+            self.goto_url = url
+            if "douyin.com/search/" in url:
+                response_url = "https://www.douyin.com/aweme/v1/web/general/search/single/"
+                payload = {
+                    "data": [{"aweme_info": {"aweme_id": "7300000000000000010", "desc": "并发抖音"}}]
+                }
+            else:
+                response_url = "https://www.kuaishou.com/rest/v/search/feed"
+                payload = {
+                    "data": {"visionSearchPhoto": {"feeds": [{"photo": {"id": "3xconcurrent", "caption": "并发快手"}}]}}
+                }
+            self.handlers["response"](FakeResponse(response_url, payload))
+
+    class ConcurrentBrowser:
+        def new_context(self, **kwargs):
+            return FakeContext(GatedPage(None))
+
+        def close(self):
+            pass
+
+    backend = BrowserSearchBackend(browser_factory=ConcurrentBrowser, timeout_seconds=0.2)
+    results = {}
+
+    def run(platform):
+        results[platform] = backend.search_many([(platform, "并发")], 3)
+
+    first = threading.Thread(target=run, args=(Platform.DOUYIN,))
+    second = threading.Thread(target=run, args=(Platform.KUAISHOU,))
+    first.start()
+    assert entered.wait(2), "第一次搜索没有进入页面"
+    second.start()
+    time.sleep(0.1)
+    try:
+        assert peak == 1, "search_many 没有串行化，两个浏览器会话发生了重叠"
+    finally:
+        release.set()
+    first.join(3)
+    second.join(3)
+    assert not first.is_alive() and not second.is_alive()
+    assert [hit.media_id for hit in results[Platform.DOUYIN][Platform.DOUYIN]] == [
+        "7300000000000000010"
+    ]
+    assert [hit.media_id for hit in results[Platform.KUAISHOU][Platform.KUAISHOU]] == [
+        "3xconcurrent"
+    ]
+
+
+def test_persistent_profile_reuses_one_context_for_many_platforms():
+    """持久化 Profile 整批共用一个 Context，单平台结束只能关页面。"""
+
+    class PersistentPage(FakePage):
+        def __init__(self):
+            super().__init__(None)
+            self.closed = False
+
+        def goto(self, url, **kwargs):
+            self.goto_url = url
+            if "douyin.com/search/" in url:
+                response_url = "https://www.douyin.com/aweme/v1/web/general/search/single/"
+                payload = {
+                    "data": [
+                        {"aweme_info": {"aweme_id": "7300000000000000009", "desc": "持久化抖音"}}
+                    ]
+                }
+            else:
+                response_url = "https://www.kuaishou.com/rest/v/search/feed"
+                payload = {
+                    "data": {
+                        "feeds": [{"photo": {"id": "3xpersistent", "caption": "持久化快手"}}]
+                    }
+                }
+            self.handlers["response"](FakeResponse(response_url, payload))
+
+        def close(self):
+            self.closed = True
+
+    class PersistentContext:
+        def __init__(self):
+            self.closed = False
+            self.pages = []
+
+        def new_page(self):
+            if self.closed:
+                raise RuntimeError("Target page, context or browser has been closed")
+            page = PersistentPage()
+            self.pages.append(page)
+            return page
+
+        def add_cookies(self, cookies):
+            pass
+
+        def close(self):
+            self.closed = True
+
+    class FakePlaywright:
+        def stop(self):
+            pass
+
+    context = PersistentContext()
+    port = module._PersistentPort(context, FakePlaywright())
+    backend = BrowserSearchBackend(browser_factory=lambda: port, timeout_seconds=0.05)
+    results = backend.search_many(
+        [(Platform.DOUYIN, "持久化"), (Platform.KUAISHOU, "持久化")], 3
+    )
+    assert [hit.media_id for hit in results[Platform.DOUYIN]] == ["7300000000000000009"]
+    assert [hit.media_id for hit in results[Platform.KUAISHOU]] == ["3xpersistent"]
+    assert backend.last_issues == {}
+    assert len(context.pages) == 2
+    assert all(page.closed for page in context.pages)  # 每个平台结束只关自己的页面
+    assert context.closed  # 整批结束后才释放共享 Context
+
+
+def test_is_valid_empty_result_matrix():
+    assert module.is_valid_empty_result(Platform.XIAOHONGSHU, {"data": {"items": []}})
+    assert module.is_valid_empty_result(Platform.KUAISHOU, {"data": {"result": {"feeds": []}}})
+    assert module.is_valid_empty_result(Platform.KUAISHOU, {"result": 1, "data": {"result": None}})
+    assert module.is_valid_empty_result(Platform.DOUYIN, {"status_code": 0, "data": []})
+    # 风控码/结构异常都不能算合法空结果
+    assert not module.is_valid_empty_result(Platform.KUAISHOU, {"result": 2})
+    assert not module.is_valid_empty_result(Platform.DOUYIN, {"status_code": 8, "data": []})
+    assert not module.is_valid_empty_result(Platform.XIAOHONGSHU, {"code": -100, "success": False})
+    assert not module.is_valid_empty_result(Platform.XIAOHONGSHU, {"data": {}})
+
+
+def test_valid_empty_kuaishou_returns_quickly_without_error():
+    page = FakePage(
+        FakeResponse(
+            "https://www.kuaishou.com/rest/v/search/feed",
+            {"data": {"result": {"feeds": []}}},
+        )
+    )
+    backend = BrowserSearchBackend(browser_factory=lambda: FakeBrowser(page), timeout_seconds=5)
+    started = time.monotonic()
+    hits = backend.search(Platform.KUAISHOU, "空结果", 3)
+    elapsed = time.monotonic() - started
+    assert hits == []
+    assert backend.last_issues == {}
+    # 合法空结果应立即收尾，而不是等满 timeout 后被当成页面改版。
+    assert elapsed < 1.0
+
+
+def test_valid_empty_douyin_returns_empty_without_error():
+    page = FakePage(
+        FakeResponse(
+            "https://www.douyin.com/aweme/v1/web/general/search/single/",
+            {"status_code": 0, "data": []},
+        )
+    )
+    backend = BrowserSearchBackend(browser_factory=lambda: FakeBrowser(page), timeout_seconds=5)
+    assert backend.search(Platform.DOUYIN, "空结果", 3) == []
+    assert backend.last_issues == {}

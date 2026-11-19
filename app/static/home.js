@@ -15,6 +15,10 @@
   const LOGIN_TIMEOUT_MS = 360000;
   // AI 搜索要串行跑多个平台（含无头浏览器），比普通请求预算长得多。
   const SEARCH_TIMEOUT_MS = 90000;
+  // 后端 SearchRequest.image 的上限是 8MiB 原始字节，按 base64 data URI 字符数
+  // 换算为 (8MiB+2)//3*4+64；前端必须采用同一换算（app/search/models.py），
+  // 否则 6.3MB 以上的合法图片会在后端接受后被前端误拒。
+  const SEARCH_IMAGE_MAX_DATA_URL_CHARS = 11184876;
   let searchImageDataUrl = '';
   let searchStatus = null;
   const platforms = { douyin: '抖音', 'selected-douyin': '抖音精选', kuaishou: '快手', xiaohongshu: '小红书', bilibili: 'B站', wechat: '视频号', youtube: 'YouTube' };
@@ -124,7 +128,11 @@
     }
     if (!response.ok) {
       let detail; try { detail = (await response.json()).detail; } catch { detail = null; }
-      const error = new Error(typeof detail === 'string' ? detail : detail?.[0]?.msg || `请求失败（${response.status}），请稍后重试。`);
+      // 搜索接口统一返回 {"message","issue_code"} 对象，FastAPI 校验错误则是 detail 数组。
+      const message = typeof detail === 'string' ? detail
+        : typeof detail?.message === 'string' ? detail.message
+        : detail?.[0]?.msg;
+      const error = new Error(message || `请求失败（${response.status}），请稍后重试。`);
       error.httpStatus = response.status;
       throw error;
     }
@@ -704,6 +712,9 @@
     $('#search-selected-count').textContent = '0';
     $('#search-download-selected').disabled = true;
     $('#search-image-state').textContent = '';
+    // 上传的图片只属于上一次会话，重新打开时必须丢弃，避免隐式压过新填的图片 URL。
+    searchImageDataUrl = '';
+    const imageFile = $('#search-image-file'); if (imageFile) imageFile.value = '';
     const note = $('#search-plan-note'); note.hidden = true; note.textContent = '';
     dialog.showModal();
     const status = await loadSearchStatus(true);
@@ -723,12 +734,20 @@
       if (!chosen) { searchImageDataUrl = ''; $('#search-image-state').textContent = ''; return; }
       if (chosen.size > 8 * 1024 * 1024) {
         searchImageDataUrl = '';
+        file.value = '';
         $('#search-image-state').textContent = '图片超过 8MB，请压缩后再试。';
         return;
       }
       const reader = new FileReader();
       reader.onload = () => {
-        searchImageDataUrl = String(reader.result || '');
+        const dataUrl = String(reader.result || '');
+        if (dataUrl.length > SEARCH_IMAGE_MAX_DATA_URL_CHARS) {
+          searchImageDataUrl = '';
+          file.value = '';
+          $('#search-image-state').textContent = '图片编码后超过上限，请压缩后再试。';
+          return;
+        }
+        searchImageDataUrl = dataUrl;
         $('#search-image-state').textContent = `已选择：${chosen.name}`;
       };
       reader.onerror = () => { searchImageDataUrl = ''; $('#search-image-state').textContent = '读取图片失败。'; };

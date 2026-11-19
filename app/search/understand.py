@@ -312,7 +312,9 @@ def plan_keywords(
         keywords={platform: [query] for platform in platform_values} if query else {},
         source="raw",
     )
-    if not raw_plan.keywords:
+    # 纯图片请求没有可退回的原始关键词，必须交给理解层从图片生成，
+    # 不能因为 raw_plan.keywords 为空就提前返回。
+    if not query and not image:
         return raw_plan
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},

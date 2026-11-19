@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -100,6 +101,9 @@ class SearchService:
         )
         self._engine: Any | None = None
         self._browser: BrowserSearchBackend | None = None
+        # 浏览器后端把单平台失败记录在共享的 last_issues 里，创建后端与
+        # “执行搜索 + 读取失败表”都需要串行化，避免并发请求互相覆盖。
+        self._browser_lock = threading.Lock()
 
     # -- 惰性资源 -------------------------------------------------------
     def _get_engine(self) -> Any:
@@ -108,9 +112,10 @@ class SearchService:
         return self._engine
 
     def _get_browser(self, config: SearchConfig) -> BrowserSearchBackend:
-        if self._browser is None:
-            self._browser = self._browser_backend_factory(config)
-        return self._browser
+        with self._browser_lock:
+            if self._browser is None:
+                self._browser = self._browser_backend_factory(config)
+            return self._browser
 
     # -- 入口 -----------------------------------------------------------
     def search(self, request: SearchRequest) -> SearchResponse:
@@ -141,6 +146,20 @@ class SearchService:
             config=config,
             limit=request.limit,
         )
+        # 纯图片请求若理解层没有生成关键词，就没有任何可执行的搜索：
+        # 逐平台给出可读原因，而不是返回“0 条结果”且不做解释。
+        missing_message = plan.fallback_reason or "AI 未能从图片生成搜索关键词，请补充内容描述或更换图片"
+        for platform in platforms:
+            if platform_keywords.get(platform):
+                continue
+            results[platform] = PlatformResult(
+                platform=platform,
+                issue=PlatformIssue(
+                    platform=platform,
+                    issue_code=SiteIssueCode.UNKNOWN.value,
+                    message=missing_message,
+                ),
+            )
 
         merged = self._merge(results, request.limit)
         if client is not None and request.ai_mode and request.query and len(merged) >= 6:
@@ -172,12 +191,19 @@ class SearchService:
         self, request: SearchRequest, config: SearchConfig, platforms: list[Platform]
     ) -> tuple[SearchPlan, AgnesClient | None]:
         platform_values = [platform.value for platform in platforms]
+        # 与 understand.plan_keywords 的降级计划保持同一结构：query 为空时没有
+        # 可退回的关键词，而不是“每个平台一个空列表”。
         raw = KeywordPlan(
-            keywords={value: ([request.query] if request.query else []) for value in platform_values},
+            keywords={value: [request.query] for value in platform_values} if request.query else {},
             source="raw",
         )
         if not request.ai_mode:
-            return self._to_plan(raw, fallback_reason="已关闭 AI 模式，使用原始关键词"), None
+            reason = (
+                "已关闭 AI 模式，使用原始关键词"
+                if request.query
+                else "图片搜索需要开启 AI 模式"
+            )
+            return self._to_plan(raw, fallback_reason=reason), None
         try:
             key = self._key_store.load()
         except OSError:
@@ -202,6 +228,11 @@ class SearchService:
             # AI 失败不阻塞搜索：退回原始关键词，并把原因告诉用户。
             return self._to_plan(raw, fallback_reason=f"AI 理解失败：{safe_external_error_message(str(exc))[:200]}"), None
         if plan.source == "raw" and plan.keywords == raw.keywords:
+            if not request.query:
+                return self._to_plan(
+                    plan,
+                    fallback_reason="AI 未能从图片生成搜索关键词，请补充内容描述或更换图片",
+                ), client
             return self._to_plan(plan, fallback_reason="AI 输出无法解析，已使用原始关键词"), client
         return self._to_plan(plan, fallback_reason=None), client
 
@@ -293,7 +324,11 @@ class SearchService:
                 return
             backend = self._get_browser(config)
             try:
-                batch = backend.search_many(tasks, limit)
+                # search_many 返回时锁已释放，而 last_issues 是浏览器后端的
+                # 共享状态、下一次调用会清空；必须与读取放在同一临界区。
+                with self._browser_lock:
+                    batch = backend.search_many(tasks, limit)
+                    issues = backend.last_issues
             except DownloaderCoreError as exc:
                 for platform in batch_platforms:
                     results[platform] = PlatformResult(platform=platform, issue=_issue(platform, exc))
@@ -302,7 +337,6 @@ class SearchService:
                 for platform in batch_platforms:
                     results[platform] = PlatformResult(platform=platform, issue=_issue(platform, exc))
                 return
-            issues = backend.last_issues
             for platform, _keyword in tasks:
                 hits = batch.get(platform, [])
                 if hits:
@@ -312,14 +346,8 @@ class SearchService:
                         platform=platform, issue=_issue(platform, issues[platform])
                     )
                 else:
-                    results[platform] = PlatformResult(
-                        platform=platform,
-                        issue=PlatformIssue(
-                            platform=platform,
-                            issue_code=SiteIssueCode.CONTENT_UNAVAILABLE.value,
-                            message="该平台没有返回搜索结果",
-                        ),
-                    )
+                    # 合法空搜索（平台明确返回 0 条）不是错误，UI 会统一展示“没有找到结果”。
+                    results[platform] = PlatformResult(platform=platform)
 
         def run_agent_reach(platform: Platform) -> bool:
             if not self._agent_reach.available() or platform not in CHANNEL_BY_PLATFORM:

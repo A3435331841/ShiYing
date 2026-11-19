@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import threading
 import time
 from pathlib import Path
@@ -40,8 +41,22 @@ LABELS = {
 }
 DEFAULT_LOGIN_TIMEOUT_SECONDS = 300.0
 _STATUS_FILE = "search-login.json"
-# 同一 Profile 不能被两个 Playwright 实例同时打开。
-_PROFILE_LOCK = threading.Lock()
+# 同一 Profile 不能被两个 Playwright 实例同时打开：登录窗口与搜索后端共用一把锁。
+PROFILE_LOCK_TIMEOUT_SECONDS = 5.0
+_PROFILE_LOCKS: dict[str, threading.Lock] = {}
+_PROFILE_LOCKS_GUARD = threading.Lock()
+
+
+def profile_lock(profile_dir: Path | str) -> threading.Lock:
+    """按 Profile 目录取进程内共享锁（同一目录的搜索与登录互斥）。"""
+
+    key = os.path.normcase(os.path.abspath(str(profile_dir)))
+    with _PROFILE_LOCKS_GUARD:
+        lock = _PROFILE_LOCKS.get(key)
+        if lock is None:
+            lock = threading.Lock()
+            _PROFILE_LOCKS[key] = lock
+        return lock
 
 
 def _marker_path(profile_dir: Path) -> Path:
@@ -97,9 +112,10 @@ def login_with_browser(
             f"{LABELS.get(platform, platform)} 不支持搜索登录",
             issue_code=SiteIssueCode.LOCAL_CONFIGURATION,
         )
-    if not _PROFILE_LOCK.acquire(timeout=5):
+    lock = profile_lock(profile_dir)
+    if not lock.acquire(timeout=PROFILE_LOCK_TIMEOUT_SECONDS):
         raise DiscoveryError(
-            "另一个登录窗口正在使用搜索 Profile，请稍后再试",
+            "搜索或另一个登录窗口正在使用搜索 Profile，请稍后再试",
             issue_code=SiteIssueCode.LOCAL_CONFIGURATION,
         )
     try:
@@ -108,6 +124,8 @@ def login_with_browser(
 
         profile_dir = Path(profile_dir)
         profile_dir.mkdir(parents=True, exist_ok=True)
+        playwright = None
+        context = None
         try:
             playwright = sync_playwright().start()
             context = playwright.chromium.launch_persistent_context(
@@ -118,8 +136,12 @@ def login_with_browser(
                 locale="zh-CN",
             )
         except PlaywrightError as exc:
+            # 启动失败（Chrome 缺失/Profile 被占用）时必须回收已启动的驱动进程。
+            if playwright is not None:
+                with contextlib.suppress(Exception):
+                    playwright.stop()
             raise DiscoveryError(
-                "无法启动登录窗口，请确认已安装 Google Chrome",
+                "无法启动登录窗口，请确认已安装 Google Chrome，且没有其他登录窗口占用搜索 Profile",
                 issue_code=SiteIssueCode.LOCAL_CONFIGURATION,
             ) from exc
         try:
@@ -145,4 +167,4 @@ def login_with_browser(
             with contextlib.suppress(Exception):
                 playwright.stop()
     finally:
-        _PROFILE_LOCK.release()
+        lock.release()

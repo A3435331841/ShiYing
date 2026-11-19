@@ -26,6 +26,7 @@ from ...errors import (
     TemporaryAccessError,
 )
 from ...models import Platform
+from .. import session as search_session
 from ..models import SearchHit
 
 MAX_RESPONSE_BYTES = 16 * 1024 * 1024
@@ -393,6 +394,75 @@ class BrowserPort(Protocol):
     def close(self) -> None: ...
 
 
+def is_valid_empty_result(platform: Platform, payload: Any) -> bool:
+    """判断“搜索成功但没有结果”的合法空响应（区别于风控/结构变化）。
+
+    - 小红书：``data.items == []``
+    - 快手：``data.result`` 为空或其 ``feeds`` 为空
+    - 抖音：``status_code`` 为 0 且 ``data == []``
+    """
+
+    if not isinstance(payload, dict):
+        return False
+    if platform is Platform.XIAOHONGSHU:
+        data = payload.get("data")
+        return (
+            isinstance(data, dict)
+            and isinstance(data.get("items"), list)
+            and len(data["items"]) == 0
+        )
+    if platform is Platform.KUAISHOU:
+        code = payload.get("result")
+        if isinstance(code, int) and code not in (0, 1):
+            return False
+        data = payload.get("data")
+        if not isinstance(data, dict):
+            return False
+        result = data.get("result")
+        if result is None:
+            return True
+        if isinstance(result, dict):
+            feeds = result.get("feeds")
+            return isinstance(feeds, list) and len(feeds) == 0
+        return False
+    if platform is Platform.DOUYIN:
+        code = payload.get("status_code")
+        if isinstance(code, int) and code not in (0, 1):
+            return False
+        data = payload.get("data")
+        return isinstance(data, list) and len(data) == 0
+    return False
+
+
+class _PersistentContextPort:
+    """持久化 Profile 的单次搜索句柄：close 只关页面，不关共享 Context。
+
+    ``launch_persistent_context`` 一个 Profile 只有一个 Context，整批平台共用；
+    若每个平台结束时关闭它，后续平台会拿到 TargetClosedError。
+    """
+
+    def __init__(self, context: Any) -> None:
+        self._context = context
+        self._pages: list[Any] = []
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._context, name)
+
+    def add_cookies(self, cookies: list[dict[str, Any]]) -> None:
+        self._context.add_cookies(cookies)
+
+    def new_page(self) -> Any:
+        page = self._context.new_page()
+        self._pages.append(page)
+        return page
+
+    def close(self) -> None:
+        for page in self._pages:
+            with contextlib.suppress(Exception):
+                page.close()
+        self._pages.clear()
+
+
 class _PersistentPort:
     """把 launch_persistent_context 包装成 BrowserPort（同一 Profile 一个上下文）。"""
 
@@ -401,7 +471,7 @@ class _PersistentPort:
         self.playwright = playwright
 
     def new_context(self, **kwargs: Any) -> Any:
-        return self.context
+        return _PersistentContextPort(self.context)
 
     def close(self) -> None:
         with contextlib.suppress(Exception):
@@ -513,25 +583,44 @@ class BrowserSearchBackend:
         self._last_issues = {}
         if not tasks:
             return {}
-        browser = self._launch_browser()
-        try:
-            results: dict[Platform, list[SearchHit]] = {}
-            for platform, keyword in tasks:
-                try:
-                    results[platform] = self._search_one(browser, platform, keyword, limit)
-                except BaseException as exc:  # noqa: BLE001 - 单平台失败记录后继续
-                    if isinstance(exc, (KeyboardInterrupt, SystemExit)):
-                        raise
-                    self._last_issues[platform] = exc
-                    results[platform] = []
-            return results
-        finally:
-            with contextlib.suppress(Exception):
-                browser.close()
-            playwright = getattr(browser, "_search_playwright", None)
-            if playwright is not None:
+        with self._profile_guard():
+            browser = self._launch_browser()
+            try:
+                results: dict[Platform, list[SearchHit]] = {}
+                for platform, keyword in tasks:
+                    try:
+                        results[platform] = self._search_one(browser, platform, keyword, limit)
+                    except BaseException as exc:  # noqa: BLE001 - 单平台失败记录后继续
+                        if isinstance(exc, (KeyboardInterrupt, SystemExit)):
+                            raise
+                        self._last_issues[platform] = exc
+                        results[platform] = []
+                return results
+            finally:
                 with contextlib.suppress(Exception):
-                    playwright.stop()
+                    browser.close()
+                playwright = getattr(browser, "_search_playwright", None)
+                if playwright is not None:
+                    with contextlib.suppress(Exception):
+                        playwright.stop()
+
+    @contextlib.contextmanager
+    def _profile_guard(self):
+        """持久化 Profile 与登录窗口互斥（同一目录共用一把进程内锁）。"""
+
+        if self.persistent_profile_dir is None:
+            yield
+            return
+        lock = search_session.profile_lock(Path(self.persistent_profile_dir))
+        if not lock.acquire(timeout=search_session.PROFILE_LOCK_TIMEOUT_SECONDS):
+            raise TemporaryAccessError(
+                "登录窗口正在使用搜索 Profile，请关闭登录窗口后再搜索",
+                issue_code=SiteIssueCode.LOCAL_CONFIGURATION,
+            )
+        try:
+            yield
+        finally:
+            lock.release()
 
     def _search_one(
         self, browser: BrowserPort, platform: Platform, keyword: str, limit: int
@@ -554,6 +643,7 @@ class BrowserSearchBackend:
             page = context.new_page()
             captured: list[SearchHit] = []
             api_error: list[dict[str, Any]] = []
+            empty_result: list[bool] = []
             done = threading.Event()
             lock = threading.Lock()
 
@@ -576,6 +666,12 @@ class BrowserSearchBackend:
                 if hits:
                     with lock:
                         captured.extend(hits)
+                        done.set()
+                    return
+                # 合法空结果（搜索成功但 0 条）不应被当成登录/结构错误，也不必等满超时。
+                if is_valid_empty_result(platform, payload):
+                    with lock:
+                        empty_result.append(True)
                         done.set()
                     return
                 # 平台用 JSON 错误码拒绝匿名搜索（如快手 result=2）：记录后尽早收尾。
@@ -608,19 +704,23 @@ class BrowserSearchBackend:
             with lock:
                 hits = list(captured)
                 error_code = api_error[0]["code"] if api_error else None
+                empty = bool(empty_result)
             if not hits and error_code is not None:
                 raise AuthenticationRequiredError(
                     f"平台拒绝了搜索请求（风控码 {error_code}）。请在设置中点击对应平台的登录按钮完成扫码登录后再搜索",
                     verification_url=search_url(platform, keyword),
                     issue_code=SiteIssueCode.LOGIN_REQUIRED,
                 )
-            if not hits:
+            if not hits and not empty:
                 # 必须在关闭上下文之前读取落地页（验证码/安全限制/result=2）。
                 raise _classify_empty_page(
                     page,
                     search_url=search_url(platform, keyword),
                     platform=platform,
                 )
+            if not hits:
+                # 合法空搜索：返回空列表，由调用方按“无结果”展示，而不是报错。
+                return []
         finally:
             with contextlib.suppress(Exception):
                 context.close()

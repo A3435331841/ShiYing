@@ -27,23 +27,42 @@ UNSEARCHABLE_PLATFORMS: dict[Platform, str] = {
 }
 
 
+# 图片原始大小上限（与理解层 validate_image_reference 一致）。
+MAX_IMAGE_BYTES = 8 * 1024 * 1024
+# base64 编码后字符数约为原始字节的 4/3，另留 data URI 前缀余量：
+# 请求体上限必须按编码后的长度计算，否则 6.3MB 以上的合法图片会被误拒。
+MAX_IMAGE_DATA_URI_CHARS = (MAX_IMAGE_BYTES + 2) // 3 * 4 + 64
+
+
 class SearchRequest(BaseModel):
     query: str | None = Field(default=None, max_length=500)
     # http(s) 图片 URL 或 data:image/...;base64,... 数据 URI
-    image: str | None = Field(default=None, max_length=8 * 1024 * 1024)
+    image: str | None = None
     platforms: list[Platform] = Field(default_factory=lambda: list(SEARCHABLE_PLATFORMS))
     limit: int = Field(default=10, ge=1, le=30)
     # AI 关闭或未配置 key 时，query 原样作为各平台关键词。
     ai_mode: bool = True
     request_id: str | None = Field(default=None, max_length=64)
 
-    @field_validator("query", "image")
+    @field_validator("query")
     @classmethod
-    def _strip(cls, value: str | None) -> str | None:
+    def _strip_query(cls, value: str | None) -> str | None:
         if value is None:
             return None
         value = value.strip()
         return value or None
+
+    @field_validator("image")
+    @classmethod
+    def _check_image(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            return None
+        if len(value) > MAX_IMAGE_DATA_URI_CHARS:
+            raise ValueError("图片超过 8MB 限制，请压缩后再试")
+        return value
 
     @field_validator("platforms")
     @classmethod

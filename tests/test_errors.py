@@ -85,6 +85,11 @@ from app.errors import (
         ),
         ("ffmpeg was not found", SiteIssueCode.LOCAL_CONFIGURATION),
         (
+            "该作品不可见或不是可下载的视频（图集、直播回放暂不支持），未取得有效播放信息。请核对分享链接，或从原作品重新复制完整链接后重试。",
+            SiteIssueCode.CONTENT_UNAVAILABLE,
+        ),
+        # 历史文案向后兼容：仍是 cookie_unavailable，不破坏旧失败任务归类。
+        (
             "腾讯未返回播放信息。图集、直播回放等非视频作品暂不支持，普通视频请更新腾讯元宝 Cookie 后重试。",
             SiteIssueCode.COOKIE_UNAVAILABLE,
         ),

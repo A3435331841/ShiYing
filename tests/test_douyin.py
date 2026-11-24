@@ -17,6 +17,7 @@ from app.douyin import (
     discover_item_metadata_from_profile,
     discover_profile,
     is_complete_profile_media_metadata,
+    is_persisted_profile_media_metadata,
     quality_floor_dimensions,
 )
 from app.errors import (
@@ -1733,6 +1734,31 @@ def test_douyin_image_metadata_requires_trusted_complete_assets() -> None:
             ],
         },
         media_id,
+        profile_id,
+    )
+
+
+def test_persisted_douyin_metadata_preserves_identity_without_media_urls() -> None:
+    profile_id = "MS4wLjABAAAAexpected"
+    media_id = "7676078420824775161"
+    persisted = {
+        "media_id": media_id,
+        "owner_id": profile_id,
+        "media_kind": "image",
+        "media_urls_persisted": False,
+        "image_assets": [{"index": 1, "width": 1080, "height": 1920}],
+    }
+
+    assert not is_complete_profile_media_metadata(persisted, media_id, profile_id)
+    assert is_persisted_profile_media_metadata(persisted, media_id, profile_id)
+    assert not is_persisted_profile_media_metadata(
+        {key: value for key, value in persisted.items() if key != "media_urls_persisted"},
+        media_id,
+        profile_id,
+    )
+    assert not is_persisted_profile_media_metadata(
+        persisted,
+        "7676078420824775162",
         profile_id,
     )
 

@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
 from http.cookiejar import CookieJar
+from pathlib import Path
 from typing import Any, Callable, Iterable
 from urllib.parse import parse_qsl, unquote, urlencode, urljoin, urlsplit, urlunsplit
 
@@ -239,6 +240,23 @@ def _page_has_verification_challenge(page: Any) -> bool:
 def _looks_like_transient_limit(text: str) -> bool:
     lowered = _visible_text(text)
     return any(pattern in lowered for pattern in TRANSIENT_TEXT_PATTERNS)
+
+
+def _looks_like_soft_404(text: str) -> bool:
+    """Detect Xiaohongshu's soft-404 shell served to anonymous note requests.
+
+    Many notes return HTTP 200 but redirect to /404 with no noteDetailMap when
+    requested without a login session. That is an access restriction, not proof
+    that the work was deleted, so callers must not classify it as unavailable
+    content and tell the user to re-copy the link.
+    """
+
+    if not text or len(text) > MAX_MEDIA_V2_JSON_CHARS * 8:
+        return False
+    lowered = text.lower()
+    if "redirectpath" in lowered and "/404" in lowered:
+        return True
+    return bool(re.search(r"<title>[^<]*\b404\b[^<]*</title>", lowered))
 
 
 def _is_trusted_xiaohongshu_page_url(value: str) -> bool:
@@ -605,6 +623,7 @@ def discover_profile(
     max_scrolls: int = 300,
     stable_rounds: int = 15,
     navigation_timeout_ms: int = 45_000,
+    _retried_without_cookies: bool = False,
 ) -> XiaohongshuProfile:
     """Discover all currently visible notes from a Xiaohongshu profile."""
 
@@ -637,10 +656,54 @@ def discover_profile(
                 ) from exc
             cookie_fallback_used = True
 
+    def _auth_or_retry(challenge: bool):
+        # Chrome 登录态不被接受时，先用匿名上下文重试一次：很多主页本身可
+        # 读，直接 needs_auth 会让主页任务无法用匿名口径补足作品。已经是
+        # 匿名重试或带验证码挑战时不再递归，保留原认证错误。
+        if browser_cookies and not _retried_without_cookies and not challenge:
+            retried = discover_profile(
+                url,
+                cookie_profile=None,
+                use_browser_cookies=False,
+                allow_cookie_fallback=allow_cookie_fallback,
+                should_cancel=should_cancel,
+                max_scrolls=max_scrolls,
+                stable_rounds=stable_rounds,
+                navigation_timeout_ms=navigation_timeout_ms,
+                _retried_without_cookies=True,
+            )
+            retried.cookie_fallback_used = True
+            return retried
+        raise _xiaohongshu_auth_required(url, challenge=challenge)
+
+    profile_dir = Path(cookie_profile) if use_browser_cookies and cookie_profile else None
+    persistent_profile = profile_dir is not None and profile_dir.is_dir()
+    profile_lock_handle = None
+    if persistent_profile and profile_dir is not None:
+        from .search.session import profile_lock
+
+        profile_lock_handle = profile_lock(profile_dir)
+        if not profile_lock_handle.acquire(timeout=120):
+            raise TemporaryAccessError(
+                "搜索登录窗口正在使用小红书 Profile，请稍后重试",
+                issue_code=SiteIssueCode.LOCAL_CONFIGURATION,
+            )
     try:
         with sync_playwright() as playwright:
-            browser = playwright.chromium.launch(channel="chrome", headless=True)
-            try:
+            browser = None
+            if persistent_profile and profile_dir is not None:
+                # Chrome 的 ABE 让 yt-dlp 读不了 Cookie；直接用浏览器自身打开
+                # 搜索登录态 Profile，且有头离屏避免被判为自动化。
+                context = playwright.chromium.launch_persistent_context(
+                    user_data_dir=str(profile_dir),
+                    channel="chrome",
+                    headless=False,
+                    args=["--window-position=-32000,-32000", "--window-size=1280,900"],
+                    locale="zh-CN",
+                    viewport={"width": 1440, "height": 1100},
+                )
+            else:
+                browser = playwright.chromium.launch(channel="chrome", headless=True)
                 browser_version = browser.version
                 context = browser.new_context(
                     locale="zh-CN",
@@ -649,6 +712,7 @@ def discover_profile(
                 )
                 if browser_cookies:
                     context.add_cookies(browser_cookies)
+            try:
                 page = context.new_page()
                 page.goto(
                     url, wait_until="domcontentloaded", timeout=navigation_timeout_ms
@@ -656,9 +720,8 @@ def discover_profile(
                 page.wait_for_timeout(2_000)
 
                 if _is_explicit_xiaohongshu_auth_url(page.url):
-                    raise _xiaohongshu_auth_required(
-                        url,
-                        challenge=_is_explicit_xiaohongshu_verification_url(page.url),
+                    return _auth_or_retry(
+                        _is_explicit_xiaohongshu_verification_url(page.url)
                     )
                 if not _is_trusted_xiaohongshu_page_url(page.url):
                     raise DiscoveryError(
@@ -683,9 +746,9 @@ def discover_profile(
                         "Retry after a short wait; Chrome verification is not required."
                     )
                 if _page_has_verification_challenge(page):
-                    raise _xiaohongshu_auth_required(url, challenge=True)
+                    return _auth_or_retry(True)
                 if not discovered and _looks_like_auth_page(body_text):
-                    raise _xiaohongshu_auth_required(url, challenge=False)
+                    return _auth_or_retry(False)
 
                 author = _pick_author(page) or "Xiaohongshu Author"
                 unchanged_rounds = 0
@@ -716,11 +779,8 @@ def discover_profile(
                     page.wait_for_timeout(1_000)
 
                     if _is_explicit_xiaohongshu_auth_url(page.url):
-                        raise _xiaohongshu_auth_required(
-                            url,
-                            challenge=_is_explicit_xiaohongshu_verification_url(
-                                page.url
-                            ),
+                        return _auth_or_retry(
+                            _is_explicit_xiaohongshu_verification_url(page.url)
                         )
                     if not _is_trusted_xiaohongshu_page_url(page.url):
                         raise DiscoveryError(
@@ -738,9 +798,9 @@ def discover_profile(
                             "required."
                         )
                     if _page_has_verification_challenge(page):
-                        raise _xiaohongshu_auth_required(url, challenge=True)
+                        return _auth_or_retry(True)
                     if not discovered and _looks_like_auth_page(updated_body):
-                        raise _xiaohongshu_auth_required(url, challenge=False)
+                        return _auth_or_retry(False)
                 if not discovery_complete and not discovery_warning:
                     discovery_warning = (
                         "Xiaohongshu reached the discovery safety limit before confirming "
@@ -761,7 +821,11 @@ def discover_profile(
                     discovery_complete=discovery_complete,
                 )
             finally:
-                browser.close()
+                with contextlib.suppress(Exception):
+                    context.close()
+                if browser is not None:
+                    with contextlib.suppress(Exception):
+                        browser.close()
     except (
         AuthenticationRequiredError,
         DownloadCancelledError,
@@ -779,6 +843,9 @@ def discover_profile(
         raise DiscoveryError(
             f"Xiaohongshu browser discovery failed: {message}"
         ) from exc
+    finally:
+        if profile_lock_handle is not None:
+            profile_lock_handle.release()
 
 
 def _extract_balanced_object(source: str, offset: int) -> str:
@@ -1299,6 +1366,71 @@ def _upload_date(note: dict[str, Any]) -> str | None:
     return None
 
 
+def _read_note_with_persistent_profile(url: str, profile_dir: Path) -> str:
+    """用搜索登录态的持久化 Profile 以真实浏览器读取笔记页。
+
+    Chrome 127+ 的 App-Bound Encryption 让 yt-dlp 无法解密 Cookie；
+    但 Playwright 打开同一个 Profile 时浏览器自身可以正常使用登录态。
+    """
+
+    try:
+        from playwright.sync_api import Error as PlaywrightError
+        from playwright.sync_api import sync_playwright
+    except ImportError as exc:
+        raise DiscoveryError(
+            "Playwright is required for Xiaohongshu login-state reading"
+        ) from exc
+    from .search.session import profile_lock
+
+    lock = profile_lock(profile_dir)
+    if not lock.acquire(timeout=120):
+        raise TemporaryAccessError(
+            "搜索登录窗口正在使用小红书 Profile，请稍后重试",
+            issue_code=SiteIssueCode.LOCAL_CONFIGURATION,
+        )
+    try:
+        with sync_playwright() as playwright:
+            context = playwright.chromium.launch_persistent_context(
+                user_data_dir=str(profile_dir),
+                channel="chrome",
+                headless=False,
+                args=["--window-position=-32000,-32000", "--window-size=1280,900"],
+                locale="zh-CN",
+                viewport={"width": 1440, "height": 1100},
+            )
+            try:
+                page = context.pages[0] if context.pages else context.new_page()
+                page.goto(url, wait_until="domcontentloaded", timeout=45_000)
+                page.wait_for_timeout(1_500)
+                final_url = page.url
+                if _is_explicit_xiaohongshu_auth_url(final_url):
+                    raise _xiaohongshu_auth_required(
+                        url,
+                        challenge=_is_explicit_xiaohongshu_verification_url(final_url),
+                    )
+                if not _is_trusted_xiaohongshu_page_url(final_url):
+                    raise DiscoveryError(
+                        "Xiaohongshu note page redirected outside the trusted origin"
+                    )
+                if urlsplit(final_url).path.startswith("/404/"):
+                    raise DiscoveryError(
+                        "小红书暂时无法打开这篇笔记。链接可能已过期、作品不可见或访问受限；"
+                        "请从小红书重新复制完整分享链接后重试。",
+                        issue_code=SiteIssueCode.CONTENT_UNAVAILABLE,
+                    )
+                return page.content()
+            finally:
+                with contextlib.suppress(Exception):
+                    context.close()
+    except PlaywrightError as exc:
+        raise TemporaryAccessError(
+            "小红书登录态浏览器启动失败，请稍后重试",
+            issue_code=SiteIssueCode.LOCAL_CONFIGURATION,
+        ) from exc
+    finally:
+        lock.release()
+
+
 def parse_note(
     url: str,
     *,
@@ -1325,32 +1457,43 @@ def parse_note(
         with YoutubeDL(options) as ydl:
             return _read_page(ydl, url)
 
-    try:
-        html = load(use_browser_cookies)
-    except (DownloadError, OSError) as exc:
-        message = str(exc).lower()
-        cookie_error = any(
-            marker in message
-            for marker in (
-                "cookie database",
-                "could not copy chrome",
-                "decrypt",
-                "keyring",
-                "failed to load cookies",
-                "could not find chrome cookies",
+    profile_dir = Path(cookie_profile) if cookie_profile else None
+    if use_browser_cookies and profile_dir is not None and profile_dir.is_dir():
+        # 搜索登录态保存在独立 Profile 中；Chrome 的 ABE 让 yt-dlp 读不了
+        # Cookie，但 Playwright 用浏览器自身打开该 Profile 可以正常复用登录态。
+        try:
+            html = _read_note_with_persistent_profile(url, profile_dir)
+        except (AuthenticationRequiredError, TemporaryAccessError, DiscoveryError):
+            # 登录态失效时不要直接判死：公开笔记匿名仍可读，回退一次匿名。
+            html = load(False)
+            cookie_fallback_used = True
+    else:
+        try:
+            html = load(use_browser_cookies)
+        except (DownloadError, OSError) as exc:
+            message = str(exc).lower()
+            cookie_error = any(
+                marker in message
+                for marker in (
+                    "cookie database",
+                    "could not copy chrome",
+                    "decrypt",
+                    "keyring",
+                    "failed to load cookies",
+                    "could not find chrome cookies",
+                )
             )
-        )
-        if use_browser_cookies and cookie_error and not allow_cookie_fallback:
-            raise TemporaryAccessError(
-                "Chrome cookies could not be read. Fully quit Chrome and retry, "
-                "approve any system cookie-access prompt, or disable Chrome Cookie "
-                "in settings to continue explicitly without login and create a new "
-                "task. Opening a verification page is not required.",
-            ) from exc
-        if not use_browser_cookies or not cookie_error:
-            raise
-        html = load(False)
-        cookie_fallback_used = True
+            if use_browser_cookies and cookie_error and not allow_cookie_fallback:
+                raise TemporaryAccessError(
+                    "Chrome cookies could not be read. Fully quit Chrome and retry, "
+                    "approve any system cookie-access prompt, or disable Chrome Cookie "
+                    "in settings to continue explicitly without login and create a new "
+                    "task. Opening a verification page is not required.",
+                ) from exc
+            if not use_browser_cookies or not cookie_error:
+                raise
+            html = load(False)
+            cookie_fallback_used = True
 
     # 限流词检查放在解析失败之后：笔记正文/评论里出现"访问频繁"等词句的
     # 正常笔记此前会被永久误拒。真正的限流页解析不出笔记，
@@ -1374,6 +1517,15 @@ def parse_note(
             raise _xiaohongshu_auth_required(
                 url,
                 challenge=_looks_like_verification_challenge(html),
+            )
+        # soft-404 是比「无法解析 INITIAL_STATE」更具体的诊断，必须先判断，
+        # 否则匿名请求拿到的 404 外壳会先命中解析错误、误导成内容不可用。
+        if not use_browser_cookies and _looks_like_soft_404(html):
+            raise AuthenticationRequiredError(
+                "Xiaohongshu did not serve this note anonymously and returned a "
+                "soft-404 page. Enable Chrome Cookie / sign in to Xiaohongshu, then "
+                "retry; the note may still be available.",
+                verification_url=url,
             )
         if state_error is not None:
             raise DiscoveryError(

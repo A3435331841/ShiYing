@@ -8,8 +8,16 @@ from __future__ import annotations
 
 import asyncio
 import threading
+import weakref
 
 from .models import DownloadJob
+
+
+# 活跃订阅者注册表：停机线程无法直接 set 各缓冲区自己的 asyncio.Event，
+# 由 wake_all() 通过各自的事件循环跨界唤醒，避免 SSE 在 take() 里等到 15s
+# 超时，被 uvicorn 的 5s graceful shutdown 超时取消成 CancelledError。
+_active_buffers: weakref.WeakSet[JobEventBuffer] = weakref.WeakSet()
+_buffers_lock = threading.Lock()
 
 
 class JobEventBuffer:
@@ -22,6 +30,8 @@ class JobEventBuffer:
         self._pending: dict[str, DownloadJob] = {}
         self._revisions: dict[str, int] = {}
         self._closed = False
+        with _buffers_lock:
+            _active_buffers.add(self)
 
     def publish(self, _, job: DownloadJob) -> None:
         with self._lock:
@@ -49,3 +59,20 @@ class JobEventBuffer:
             self._closed = True
             self._pending.clear()
             self._revisions.clear()
+        with _buffers_lock:
+            _active_buffers.discard(self)
+
+
+def wake_all() -> None:
+    """从停机线程唤醒所有阻塞在 take() 的订阅者（含空缓冲区）。
+
+    RUNTIME_STOP_EVENT 属于 app/runtime 的 threading.Event，与缓冲区自己的
+    asyncio.Event 没有任何连接；只置位停机事件不会结束挂起的 SSE 生成器。
+    """
+    with _buffers_lock:
+        buffers = tuple(_active_buffers)
+    for buffer in buffers:
+        try:
+            buffer._loop.call_soon_threadsafe(buffer._ready.set)
+        except RuntimeError:
+            pass  # 事件循环已关闭（测试桩），无需再唤醒

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -34,6 +35,26 @@ MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 _TAG_RE = re.compile(r"<[^>]+>")
 _BV_RE = re.compile(r"BV[0-9A-Za-z]{10}")
 _DURATION_RE = re.compile(r"^(?:(\d+):)?(\d{1,2}):(\d{2})$")
+
+# 匿名搜索端点会间歇性返回 HTTP 412 / code -412（偶见 -352），冷却时间很短
+# （响应常带 ttl=1）。有限重试 + 尊重 ttl 的短退避即可跨过瞬时风控，而不是
+# 把整轮候选发现判为失败；重试次数与退避上限都刻意压低，不做高频压测。
+_RATE_LIMIT_CODES = frozenset({-412, -352})
+_RATE_LIMIT_ATTEMPTS = 3
+_MAX_BACKOFF_SECONDS = 3.0
+
+
+def _backoff_seconds(payload: Any) -> float:
+    """Honor B站's short ttl hint when present, capped to a small wait."""
+
+    ttl = payload.get("ttl") if isinstance(payload, dict) else None
+    try:
+        value = float(ttl)
+    except (TypeError, ValueError):
+        value = 1.0
+    if value < 0 or value != value:  # negative or NaN
+        value = 1.0
+    return min(value, _MAX_BACKOFF_SECONDS)
 
 
 def _clean_title(value: Any) -> str:
@@ -121,80 +142,94 @@ class BilibiliSearchBackend:
             # 预热失败不阻塞：搜索接口可能仍然可用，错误会在下一步暴露。
             pass
 
+    def _fetch_payload(self, keyword: str) -> dict[str, Any]:
+        """Fetch the search payload, retrying B站's intermittent 412/-412 bans."""
+
+        for attempt in range(_RATE_LIMIT_ATTEMPTS):
+            try:
+                response = self.session.get(
+                    BILIBILI_SEARCH_API,
+                    params={"search_type": "video", "keyword": keyword, "page": 1},
+                    headers={
+                        "User-Agent": UA,
+                        "Referer": BILIBILI_HOME,
+                        "Accept": "application/json, text/plain, */*",
+                        "Accept-Language": "zh-CN,zh;q=0.9",
+                    },
+                    timeout=self.timeout,
+                    allow_redirects=False,
+                )
+            except requests.Timeout as exc:
+                raise TemporaryAccessError(
+                    "B站搜索请求超时",
+                    issue_code=SiteIssueCode.NETWORK_ERROR,
+                ) from exc
+            except requests.RequestException as exc:
+                raise TemporaryAccessError(
+                    "无法连接 B站搜索接口",
+                    issue_code=SiteIssueCode.NETWORK_ERROR,
+                ) from exc
+
+            if response.status_code in (401, 403):
+                raise AuthenticationRequiredError(
+                    "B站搜索需要登录，请在设置中开启 Chrome 登录态后重试",
+                    verification_url=BILIBILI_HOME,
+                    issue_code=SiteIssueCode.LOGIN_REQUIRED,
+                )
+            if response.status_code not in (200, 412):
+                raise TemporaryAccessError(
+                    f"B站搜索接口返回 HTTP {response.status_code}",
+                    issue_code=SiteIssueCode.SITE_UNAVAILABLE,
+                )
+            if len(response.content) > MAX_RESPONSE_BYTES:
+                raise DiscoveryError(
+                    "B站搜索响应超过安全大小限制",
+                    issue_code=SiteIssueCode.SITE_RESPONSE_CHANGED,
+                )
+            try:
+                payload = response.json()
+            except (ValueError, json.JSONDecodeError) as exc:
+                raise DiscoveryError(
+                    "B站搜索返回的不是合法 JSON",
+                    issue_code=SiteIssueCode.SITE_RESPONSE_CHANGED,
+                ) from exc
+            if not isinstance(payload, dict):
+                raise DiscoveryError(
+                    "B站搜索返回的数据结构异常",
+                    issue_code=SiteIssueCode.SITE_RESPONSE_CHANGED,
+                )
+
+            code = payload.get("code")
+            if response.status_code == 412 or code in _RATE_LIMIT_CODES:
+                if attempt + 1 < _RATE_LIMIT_ATTEMPTS:
+                    time.sleep(_backoff_seconds(payload))
+                    continue
+                detail = "HTTP 412" if response.status_code == 412 else str(code)
+                raise TemporaryAccessError(
+                    f"B站搜索触发风控（{detail}），请稍后再试",
+                    issue_code=SiteIssueCode.RATE_LIMITED,
+                )
+            if code == -101:
+                raise AuthenticationRequiredError(
+                    "B站要求登录后才能搜索，请开启 Chrome 登录态",
+                    verification_url=BILIBILI_HOME,
+                    issue_code=SiteIssueCode.LOGIN_REQUIRED,
+                )
+            if code != 0:
+                raise DiscoveryError(
+                    f"B站搜索接口返回错误码 {code}",
+                    issue_code=SiteIssueCode.SITE_RESPONSE_CHANGED,
+                )
+            return payload
+        raise AssertionError("unreachable")
+
     def search(self, keyword: str, limit: int = 10) -> list[SearchHit]:
         keyword = (keyword or "").strip()
         if not keyword:
             return []
         limit = max(1, min(int(limit), 30))
         self._warm()
-        try:
-            response = self.session.get(
-                BILIBILI_SEARCH_API,
-                params={"search_type": "video", "keyword": keyword, "page": 1},
-                headers={
-                    "User-Agent": UA,
-                    "Referer": BILIBILI_HOME,
-                    "Accept": "application/json, text/plain, */*",
-                    "Accept-Language": "zh-CN,zh;q=0.9",
-                },
-                timeout=self.timeout,
-                allow_redirects=False,
-            )
-        except requests.Timeout as exc:
-            raise TemporaryAccessError(
-                "B站搜索请求超时",
-                issue_code=SiteIssueCode.NETWORK_ERROR,
-            ) from exc
-        except requests.RequestException as exc:
-            raise TemporaryAccessError(
-                "无法连接 B站搜索接口",
-                issue_code=SiteIssueCode.NETWORK_ERROR,
-            ) from exc
-        if response.status_code == 412:
-            raise TemporaryAccessError(
-                "B站搜索触发风控（HTTP 412），请稍后再试",
-                issue_code=SiteIssueCode.RATE_LIMITED,
-            )
-        if response.status_code in (401, 403):
-            raise AuthenticationRequiredError(
-                "B站搜索需要登录，请在设置中开启 Chrome 登录态后重试",
-                verification_url=BILIBILI_HOME,
-                issue_code=SiteIssueCode.LOGIN_REQUIRED,
-            )
-        if response.status_code != 200:
-            raise TemporaryAccessError(
-                f"B站搜索接口返回 HTTP {response.status_code}",
-                issue_code=SiteIssueCode.SITE_UNAVAILABLE,
-            )
-        if len(response.content) > MAX_RESPONSE_BYTES:
-            raise DiscoveryError(
-                "B站搜索响应超过安全大小限制",
-                issue_code=SiteIssueCode.SITE_RESPONSE_CHANGED,
-            )
-        try:
-            payload = response.json()
-        except (ValueError, json.JSONDecodeError) as exc:
-            raise DiscoveryError(
-                "B站搜索返回的不是合法 JSON",
-                issue_code=SiteIssueCode.SITE_RESPONSE_CHANGED,
-            ) from exc
-        code = payload.get("code") if isinstance(payload, dict) else None
-        if code == -412:
-            raise TemporaryAccessError(
-                "B站搜索触发风控（-412），请稍后再试",
-                issue_code=SiteIssueCode.RATE_LIMITED,
-            )
-        if code == -101:
-            raise AuthenticationRequiredError(
-                "B站要求登录后才能搜索，请开启 Chrome 登录态",
-                verification_url=BILIBILI_HOME,
-                issue_code=SiteIssueCode.LOGIN_REQUIRED,
-            )
-        if code != 0:
-            raise DiscoveryError(
-                f"B站搜索接口返回错误码 {code}",
-                issue_code=SiteIssueCode.SITE_RESPONSE_CHANGED,
-            )
+        payload = self._fetch_payload(keyword)
         data = payload.get("data") if isinstance(payload, dict) else None
         result = data.get("result") if isinstance(data, dict) else None
         if not isinstance(result, list):

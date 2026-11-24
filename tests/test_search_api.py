@@ -44,15 +44,27 @@ def test_status_lists_platforms_and_unsearchable(client):
     assert "agent_reach" in data
 
 
-def test_disabled_config_blocks_search(client, monkeypatch):
+def test_disabled_config_allows_keyword_search(client, monkeypatch):
     monkeypatch.setattr(main, "config", main.AppConfig(ai_search_enabled=False))
+
+    def fake_search(self, request):
+        assert request.query == "猫"
+        assert request.ai_mode is False
+        return SearchResponse(
+            plan=SearchPlan(keywords={"bilibili": ["猫"]}, fallback_reason="AI 搜索已在设置中关闭，使用原始关键词"),
+            results=[],
+            hits=[],
+        )
+
+    from app.search.service import SearchService
+
+    monkeypatch.setattr(SearchService, "search", fake_search)
     response = client.post(
         "/api/search",
         json={"query": "猫", "platforms": ["bilibili"], "ai_mode": False},
     )
-    assert response.status_code == 422
-    detail = response.json()["detail"]
-    assert detail["issue_code"] == SiteIssueCode.LOCAL_CONFIGURATION.value
+    assert response.status_code == 200
+    assert response.json()["plan"]["fallback_reason"]
 
 
 def test_search_returns_payload_with_results(client, monkeypatch):

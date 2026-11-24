@@ -1,14 +1,8 @@
 name: Douyin profile live smoke
 
+# Live smoke 依赖真实平台登录态与生产 Chrome、耗时较长，仅手动触发。
+# 原先绑定已不存在的临时工作分支的 push 触发是死配置，已移除。
 on:
-  push:
-    branches:
-      - codex/douyin-duration-probe
-    paths:
-      - app/**
-      - scripts/douyin_profile_live_smoke.py
-      - scripts/douyin_item_live_smoke.py
-      - .github/workflows/profile-live-smoke.yml
   workflow_dispatch:
     inputs:
       url:
@@ -28,7 +22,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-14]
+        # macOS runner 在本账号不可用，与 tests.yml 的矩阵口径保持一致。
+        os: [ubuntu-24.04]
     steps:
       - uses: actions/checkout@v7
         with:
@@ -75,7 +70,7 @@ jobs:
           import os
           import subprocess
           import sys
-          command = [sys.executable, "scripts/douyin_profile_live_smoke.py",
+          command = [sys.executable, "scripts/dev/douyin_profile_live_smoke.py",
                      "--url", os.environ["INPUT_URL"], "--timeout", "900",
                      "--report", os.path.join(os.environ["RUNNER_TEMP"], "douyin-profile-report.json")]
           raise SystemExit(subprocess.call(command))

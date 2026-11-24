@@ -3,14 +3,14 @@
 流程：
 1. 依据源码指纹生成 build/pyinstaller/build_id.txt（冻结模式 /api/health 的 build_id）。
 2. 准备包内 bin/：venv 的 deno.exe + 捆绑的 ffmpeg/ffprobe（gyan.dev essentials，
-   首次下载后把 URL+SHA256 锁定进 scripts/release/ffmpeg.lock.json，后续构建强校验）。
+   首次下载后把来源 ZIP 与解压二进制的 SHA256 锁定进 scripts/release/ffmpeg.lock.json。
 3. 用 PyInstaller 执行 scripts/release/shiying.spec（onedir，双入口）。
 4. dist/拾影 打包为 releases/拾影_v{版本}_win64_portable_{日期}.zip，并重算 SHA256SUMS。
 
 用法：
     python scripts/release/build_exe.py                # 完整构建
     python scripts/release/build_exe.py --skip-ffmpeg  # 复用已缓存的 ffmpeg
-    python scripts/release/build_exe.py --ffmpeg-zip PATH
+    python scripts/release/build_exe.py --ffmpeg-zip PATH --ffmpeg-sha256 SHA256
     python scripts/release/build_exe.py --repin        # 上游滚动版本更新后重新锁定
 """
 from __future__ import annotations
@@ -18,7 +18,9 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import shutil
+import tempfile
 import subprocess
 import sys
 import urllib.request
@@ -39,6 +41,7 @@ FFMPEG_URL = "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip"
 RELEASES = REPO_ROOT / "releases"
 
 README_NAME = "使用说明.txt"
+FFMPEG_BINARY_NAMES = ("ffmpeg.exe", "ffprobe.exe")
 
 
 def log(message: str) -> None:
@@ -77,43 +80,137 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def prepare_ffmpeg(zip_path: Path | None, skip: bool, repin: bool) -> None:
+def _load_ffmpeg_lock() -> dict | None:
+    if not FFMPEG_LOCK.is_file():
+        return None
+    lock = json.loads(FFMPEG_LOCK.read_text("utf-8"))
+    if not isinstance(lock, dict):
+        raise SystemExit("FFmpeg 锁文件格式无效。")
+    return lock
+
+
+def _validate_sha256(value: object, label: str) -> str:
+    if (
+        not isinstance(value, str)
+        or len(value) != 64
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise SystemExit(f"{label} 必须是 64 位小写 SHA256。")
+    return value
+
+
+def _binary_hashes(directory: Path) -> dict[str, str]:
+    return {name: _sha256(directory / name) for name in FFMPEG_BINARY_NAMES}
+
+
+def _verify_binary_hashes(actual: dict[str, str], expected: object, label: str) -> None:
+    if not isinstance(expected, dict) or set(expected) != set(FFMPEG_BINARY_NAMES):
+        raise SystemExit(f"{label} 缺少完整的 ffmpeg/ffprobe 二进制哈希，拒绝复用缓存。")
+    for name in FFMPEG_BINARY_NAMES:
+        wanted = _validate_sha256(expected[name], f"{label}.{name}")
+        if actual[name] != wanted:
+            raise SystemExit(f"{label} 中 {name} 校验和不匹配，拒绝使用。")
+    log(f"{label} 的 ffmpeg/ffprobe SHA256 校验通过")
+
+
+def _extract_ffmpeg(zip_path: Path) -> dict[str, str]:
+    with tempfile.TemporaryDirectory(prefix=".ffmpeg-", dir=FFMPEG_CACHE) as temporary:
+        extracted = Path(temporary)
+        with zipfile.ZipFile(zip_path) as archive:
+            for name in FFMPEG_BINARY_NAMES:
+                member = next(
+                    (entry for entry in archive.namelist() if entry.endswith("/bin/" + name)),
+                    None,
+                )
+                if member is None:
+                    raise SystemExit(f"FFmpeg ZIP 中缺少 bin/{name}。")
+                with archive.open(member) as src, (extracted / name).open("wb") as dst:
+                    shutil.copyfileobj(src, dst)
+        actual = _binary_hashes(extracted)
+        for name in FFMPEG_BINARY_NAMES:
+            os.replace(extracted / name, FFMPEG_CACHE / name)
+            log(f"已提取并校验 {name}")
+        return actual
+
+
+def _write_ffmpeg_lock(lock: dict) -> None:
+    temporary = FFMPEG_LOCK.with_suffix(".json.tmp")
+    temporary.write_text(
+        json.dumps(lock, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    os.replace(temporary, FFMPEG_LOCK)
+
+
+def prepare_ffmpeg(
+    zip_path: Path | None,
+    skip: bool,
+    repin: bool,
+    zip_sha256: str | None = None,
+) -> None:
+    if skip and (zip_path is not None or repin or zip_sha256 is not None):
+        raise SystemExit("--skip-ffmpeg 不能与 --ffmpeg-zip、--repin 或 --ffmpeg-sha256 同用。")
+    if zip_path is not None and repin:
+        raise SystemExit("--ffmpeg-zip 不能与 --repin 同用。")
+    if (zip_path is None) != (zip_sha256 is None):
+        raise SystemExit("--ffmpeg-zip 与 --ffmpeg-sha256 必须同时提供。")
+    if zip_sha256 is not None:
+        zip_sha256 = _validate_sha256(zip_sha256, "--ffmpeg-sha256")
+
     FFMPEG_CACHE.mkdir(parents=True, exist_ok=True)
-    ffmpeg = FFMPEG_CACHE / "ffmpeg.exe"
-    ffprobe = FFMPEG_CACHE / "ffprobe.exe"
-    if skip and ffmpeg.is_file() and ffprobe.is_file():
+    lock = _load_ffmpeg_lock()
+    if skip:
+        if lock is None:
+            raise SystemExit("没有 FFmpeg 锁文件，无法校验缓存；请先执行完整下载流程。")
+        _verify_binary_hashes(
+            _binary_hashes(FFMPEG_CACHE),
+            lock.get("binaries"),
+            "FFmpeg 缓存",
+        )
         log("复用已缓存的 ffmpeg/ffprobe")
         return
-    if zip_path is None:
-        lock = json.loads(FFMPEG_LOCK.read_text("utf-8")) if FFMPEG_LOCK.is_file() else None
+
+    official_download = zip_path is None
+    if official_download:
         if lock and not repin:
-            source_url, expected = lock["url"], lock["sha256"]
+            source_url = lock.get("url")
+            expected = _validate_sha256(lock.get("sha256"), "FFmpeg 锁文件 ZIP 哈希")
         else:
             source_url, expected = FFMPEG_URL, None
-        download = FFMPEG_CACHE / "ffmpeg-download.zip"
-        if not download.is_file() or repin or not lock:
+        zip_path = FFMPEG_CACHE / "ffmpeg-download.zip"
+        if not zip_path.is_file() or repin or not lock:
             log(f"下载 FFmpeg essentials：{source_url}")
-            urllib.request.urlretrieve(source_url, download)
-        actual = _sha256(download)
-        if expected and actual != expected:
-            raise SystemExit(
-                "FFmpeg 下载校验和不匹配：上游滚动版本已更新。"
-                "确认来源可信后运行 build_exe.py --repin 重新锁定。"
+            urllib.request.urlretrieve(source_url, zip_path)
+    else:
+        expected = zip_sha256
+        source_url = None
+
+    if not zip_path.is_file():
+        raise SystemExit(f"FFmpeg ZIP 不存在：{zip_path}")
+    actual_zip_hash = _sha256(zip_path)
+    if expected is not None and actual_zip_hash != expected:
+        raise SystemExit(
+            "FFmpeg ZIP SHA256 不匹配。"
+            + (
+                "上游滚动版本可能已更新；确认来源可信后运行 --repin 重新锁定。"
+                if official_download and not repin
+                else "请核对本地文件及其固定哈希。"
             )
-        if not expected:
-            FFMPEG_LOCK.write_text(
-                json.dumps({"url": source_url, "sha256": actual}, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-            log(f"已锁定 FFmpeg 来源 SHA256 → {FFMPEG_LOCK.name}")
-        zip_path = download
-    with zipfile.ZipFile(zip_path) as archive:
-        for name in ("ffmpeg.exe", "ffprobe.exe"):
-            member = next(entry for entry in archive.namelist() if entry.endswith("/bin/" + name))
-            target = FFMPEG_CACHE / name
-            with archive.open(member) as src, target.open("wb") as dst:
-                shutil.copyfileobj(src, dst)
-            log(f"已提取 {name}")
+        )
+
+    binaries = _extract_ffmpeg(zip_path)
+    expected_binaries = None
+    if official_download and lock and not repin:
+        expected_binaries = lock.get("binaries")
+    elif not official_download and lock and expected == lock.get("sha256"):
+        expected_binaries = lock.get("binaries")
+    if expected_binaries is not None:
+        _verify_binary_hashes(binaries, expected_binaries, "FFmpeg 锁文件")
+    elif official_download:
+        _write_ffmpeg_lock(
+            {"url": source_url, "sha256": actual_zip_hash, "binaries": binaries}
+        )
+        log(f"已锁定 FFmpeg ZIP 与二进制 SHA256 → {FFMPEG_LOCK.name}")
 
 
 def prepare_bin() -> None:
@@ -123,7 +220,7 @@ def prepare_bin() -> None:
     if not deno_src.is_file():
         raise SystemExit(f"venv 中找不到 deno.exe：{deno_src}")
     shutil.copy2(deno_src, bin_dir / "deno.exe")
-    for name in ("ffmpeg.exe", "ffprobe.exe"):
+    for name in FFMPEG_BINARY_NAMES:
         source = FFMPEG_CACHE / name
         if not source.is_file():
             raise SystemExit(f"缺少 {source}，请先完成 FFmpeg 下载步骤")
@@ -156,7 +253,7 @@ def write_package_readme(bundle: Path) -> None:
 依赖：内置 FFmpeg/FFprobe 与 Deno。需要系统已安装 Google Chrome（用于辅助会话）与 WebView2 运行时
 （Windows 10/11 通常自带）。B 站/YouTube 等平台的画质与可用性受登录态影响。
 
-默认地址 http://127.0.0.1:8766 ，仅监听本机；不上传云端，不收集数据。
+默认地址 http://127.0.0.1:8766 ，仅监听本机。下载内容与任务数据保存在本机；可选 AI 搜索开启时，会把查询文字或图片发送到你配置的兼容 AI 服务。
 首次启动如提示端口被占用，请先运行「停止拾影.exe」。
 """,
         encoding="utf-8",
@@ -242,7 +339,8 @@ def build_installer(iscc: Path | None) -> Path:
 def main() -> int:
     parser = argparse.ArgumentParser(description="构建拾影 Windows 便携包")
     parser.add_argument("--ffmpeg-zip", type=Path, default=None, help="使用本地 FFmpeg essentials zip")
-    parser.add_argument("--skip-ffmpeg", action="store_true", help="复用 build/ffmpeg 缓存")
+    parser.add_argument("--ffmpeg-sha256", default=None, help="本地 FFmpeg ZIP 的固定 SHA256")
+    parser.add_argument("--skip-ffmpeg", action="store_true", help="校验并复用 build/ffmpeg 缓存")
     parser.add_argument("--repin", action="store_true", help="重新下载并锁定 FFmpeg 来源")
     parser.add_argument("--no-pyinstaller-install", action="store_true", help="不自动安装 PyInstaller")
     parser.add_argument("--installer", action="store_true", help="便携包之外再用 Inno Setup 产出安装程序")
@@ -253,7 +351,12 @@ def main() -> int:
     if not args.no_pyinstaller_install:
         ensure_pyinstaller()
     write_build_id()
-    prepare_ffmpeg(args.ffmpeg_zip, args.skip_ffmpeg, args.repin)
+    prepare_ffmpeg(
+        args.ffmpeg_zip,
+        args.skip_ffmpeg,
+        args.repin,
+        args.ffmpeg_sha256,
+    )
     prepare_bin()
     run_pyinstaller()
     make_zip()

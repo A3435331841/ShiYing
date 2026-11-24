@@ -13,6 +13,7 @@ import time
 from dataclasses import dataclass, field
 from html.parser import HTMLParser
 from http.cookiejar import CookieJar
+from pathlib import Path
 from typing import Any, Callable, Iterable
 from urllib.parse import parse_qs, unquote, urlsplit
 
@@ -658,7 +659,7 @@ def _metadata_title(
     return f"Untitled Douyin {media_kind}"
 
 
-def _valid_cached_asset(asset: Any, *, image: bool) -> bool:
+def _valid_cached_asset(asset: Any, *, image: bool, require_urls: bool = True) -> bool:
     if not isinstance(asset, dict) or type(asset.get("index")) is not int:
         return False
     if asset["index"] <= 0:
@@ -670,12 +671,15 @@ def _valid_cached_asset(asset: Any, *, image: bool) -> bool:
         return False
     if not (0 < width <= 16_384 and 0 < height <= 16_384):
         return False
-    candidates = asset.get("candidates")
-    if not isinstance(candidates, list) or not candidates or len(candidates) > 5:
-        return False
-    domains = _DOUYIN_IMAGE_DOMAINS if image else _DOUYIN_VIDEO_DOMAINS
-    if not all(_is_trusted_https_url(value, domains) for value in candidates):
-        return False
+    if require_urls:
+        candidates = asset.get("candidates")
+        if not isinstance(candidates, list) or not candidates or len(candidates) > 5:
+            return False
+        domains = _DOUYIN_IMAGE_DOMAINS if image else _DOUYIN_VIDEO_DOMAINS
+        if not all(_is_trusted_https_url(value, domains) for value in candidates):
+            return False
+    elif image:
+        return True
     if not image:
         video_uri = str(asset.get("video_uri") or "").strip()
         if not re.fullmatch(r"[A-Za-z0-9_-]{10,200}", video_uri):
@@ -686,11 +690,17 @@ def _valid_cached_asset(asset: Any, *, image: bool) -> bool:
         ):
             return False
         direct_candidates = asset.get("direct_candidates")
-        if not (
+        if require_urls and not direct_candidates:
+            return False
+        if direct_candidates is not None and not (
             isinstance(direct_candidates, list)
             and 0 < len(direct_candidates) <= 4
             and all(
-                _valid_direct_quality_candidate(value, video_uri)
+                _valid_direct_quality_candidate(
+                    value,
+                    video_uri,
+                    require_urls=require_urls,
+                )
                 for value in direct_candidates
             )
         ):
@@ -698,7 +708,12 @@ def _valid_cached_asset(asset: Any, *, image: bool) -> bool:
     return True
 
 
-def _valid_direct_quality_candidate(value: Any, video_uri: str) -> bool:
+def _valid_direct_quality_candidate(
+    value: Any,
+    video_uri: str,
+    *,
+    require_urls: bool = True,
+) -> bool:
     if not isinstance(value, dict) or value.get("video_uri") != video_uri:
         return False
     try:
@@ -720,10 +735,12 @@ def _valid_direct_quality_candidate(value: Any, video_uri: str) -> bool:
         "bytevc2",
     }:
         return False
+    if not (0 < width <= 16_384 and 0 < height <= 16_384):
+        return False
+    if not require_urls:
+        return True
     return (
-        0 < width <= 16_384
-        and 0 < height <= 16_384
-        and isinstance(urls, list)
+        isinstance(urls, list)
         and 0 < len(urls) <= 5
         and all(_is_trusted_https_url(url, _DOUYIN_VIDEO_DOMAINS) for url in urls)
     )
@@ -733,8 +750,10 @@ def is_complete_profile_media_metadata(
     cached: Any,
     media_id: str,
     owner_id: str,
+    *,
+    require_urls: bool = True,
 ) -> bool:
-    """Return whether cached profile metadata is identity-bound and downloadable."""
+    """Return whether cached profile metadata is identity-bound and complete."""
 
     if (
         not isinstance(cached, dict)
@@ -752,6 +771,8 @@ def is_complete_profile_media_metadata(
         if not re.fullmatch(r"[A-Za-z0-9_-]{10,200}", video_uri):
             return False
         direct_candidates = cached.get("direct_candidates")
+        if not require_urls:
+            return True
         return (
             isinstance(direct_candidates, list)
             and 0 < len(direct_candidates) <= 4
@@ -765,7 +786,10 @@ def is_complete_profile_media_metadata(
     image_assets = cached.get("image_assets")
     if not isinstance(image_assets, list) or not image_assets:
         return False
-    if not all(_valid_cached_asset(value, image=True) for value in image_assets):
+    if not all(
+        _valid_cached_asset(value, image=True, require_urls=require_urls)
+        for value in image_assets
+    ):
         return False
     image_indexes = [value["index"] for value in image_assets]
     if len(set(image_indexes)) != len(image_indexes):
@@ -788,13 +812,33 @@ def is_complete_profile_media_metadata(
         return True
     if not isinstance(live_assets, list) or not live_assets:
         return False
-    if not all(_valid_cached_asset(value, image=False) for value in live_assets):
+    if not all(
+        _valid_cached_asset(value, image=False, require_urls=require_urls)
+        for value in live_assets
+    ):
         return False
     live_indexes = [value["index"] for value in live_assets]
     return (
         len(set(live_indexes)) == len(live_indexes)
         and set(live_indexes).issubset(set(image_indexes))
         and set(live_indexes).isdisjoint(normalized_fallback_indexes)
+    )
+
+
+def is_persisted_profile_media_metadata(
+    cached: Any,
+    media_id: str,
+    owner_id: str,
+) -> bool:
+    return (
+        isinstance(cached, dict)
+        and cached.get("media_urls_persisted") is False
+        and is_complete_profile_media_metadata(
+            cached,
+            media_id,
+            owner_id,
+            require_urls=False,
+        )
     )
 
 
@@ -1101,6 +1145,10 @@ def _cookie_jar_to_playwright(cookie_jar: CookieJar) -> list[dict[str, Any]]:
 
 
 def _extract_cookies(profile: str | None) -> CookieJar:
+    if profile and Path(profile).is_dir():
+        from .douyin_signing import _load_profile_cookie_jar
+
+        return _load_profile_cookie_jar(Path(profile))
     return extract_cookies_from_browser(
         "chrome", profile=profile, logger=_QuietCookieLogger()
     )
@@ -1208,6 +1256,10 @@ def discover_profile(
             )
         except AuthenticationRequiredError:
             signed_fallback_reason = "authentication-confirmation"
+        except TemporaryAccessError:
+            # 签名接口偶发返回不完整/被改写的数据，不是站点拒绝登录；
+            # 交给后面的浏览器 Profile 路径继续尝试，而不是直接判死任务。
+            signed_fallback_reason = "signed-transient"
         except DiscoveryError:
             signed_fallback_reason = "signed-integrity"
         else:
@@ -1624,6 +1676,17 @@ def discover_profile(
                     _raise_if_profile_discovery_cancelled(should_cancel)
                     auth_issue = _auth_page_issue_code(updated_body)
                     if auth_issue is not None:
+                        if discovered:
+                            # 滚动途中才出现的登录/验证提示：已核验的作品依然有效。
+                            # 若直接抛认证错误会把这些已验证作品全部丢弃、让整个
+                            # 任务失败（实测拿到 18 条后失败）。改为按「发现不完整」
+                            # 返回已验证部分并给出警告，用户可稍后继续任务补齐。
+                            discovery_warning = (
+                                "Douyin asked for login/verification partway through "
+                                "profile discovery. Verified videos found so far were "
+                                "kept; continue the task later to discover the rest."
+                            )
+                            break
                         raise _douyin_authentication_error(auth_issue, url)
                     if _looks_like_transient_limit(updated_body):
                         raise TemporaryAccessError(

@@ -16,6 +16,7 @@ import re
 import secrets
 import shutil
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -32,13 +33,31 @@ from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from .browser import open_chrome
 from .build_info import APP_ID, APP_VERSION, BUILD_ID, calculate_build_id, project_root_for
+from .capabilities import (
+    CapabilityRegistry,
+    creation_policy,
+    environment_impact,
+    load_capabilities,
+)
 from .downloader import DownloaderConfig, MediaDownloader
 from .desktop import open_folder_foreground, open_saved_file, saved_file_facts
+from .diagnostics import build_diagnostic_package
 from .errors import SiteIssueCode
 from .environment import check_environment
-from .event_stream import JobEventBuffer
-from .models import DownloadJob, ItemStatus, JobStatus, Platform, SourceKind
-from .platforms import UnsupportedUrlError, identify_url
+from .event_stream import JobEventBuffer, wake_all
+from .index import JobIndexer, entry_from_job, filter_entries
+from .index.indexer import STATUS_FALLBACK, STATUS_READY
+from .models import (
+    DownloadJob,
+    ItemStatus,
+    JobStatus,
+    LibraryItem,
+    LibraryPage,
+    Platform,
+    SourceKind,
+    UrlInfo,
+)
+from .platforms import SessionContext, UnsupportedUrlError, identify_url, provider_for
 from .runtime import (
     RUNTIME_STOP_EVENT,
     STOP_TOKEN_HEADER,
@@ -86,7 +105,7 @@ PUBLIC_DOUYIN_MEDIA_FIELDS = frozenset(
         "title",
     }
 )
-PUBLIC_SENSITIVE_QUERY_FIELDS = frozenset({"xsec_token"})
+PUBLIC_SENSITIVE_QUERY_FIELDS = frozenset({"xsec_token", "encfilekey"})
 _CONFIG_LOCK = threading.RLock()
 CONFIG_RECOVERY: dict[str, object] | None = None
 
@@ -99,6 +118,9 @@ class AppConfig(BaseModel):
     ai_search_enabled: bool = True
     ai_search_base_url: str = "https://api.agnes-ai.cn/v1"
     ai_search_model: str = "agnes-3.0-flash"
+    index_enabled: bool = True
+    capabilities_path: str = "data/capabilities.json"
+
 
     @field_validator("download_dir")
     @classmethod
@@ -137,9 +159,10 @@ class AppConfig(BaseModel):
 
 class CreateJobRequest(BaseModel):
     url: str = Field(min_length=8, max_length=4096)
+    # 前端逐条 POST 干净链接；原始文案行仅用于粘贴解析统计，不参与任务创建。
+    paste_text: str | None = Field(default=None, max_length=32768)
+    confirmed_experimental: bool = False
     auto_start: bool = True
-    # Set by the UI when the user explicitly chose "仍然下载" for a duplicate.
-    force: bool = False
     item_ids: list[str] | None = Field(default=None, min_length=1)
 
 
@@ -203,9 +226,28 @@ def _save_config(config: AppConfig) -> None:
 
 
 config = _load_config()
+
+
+def _max_download_workers() -> int:
+    """下载并发槽位；队列积压时可用环境变量调整，默认保持 5 路。
+
+    槽位是所有平台共享的，某个平台若有任务长期零进度会占住槽位、让其它
+    平台的任务排队；允许按机器带宽与风控容忍度上调，上限 16 防止无界并发。
+    """
+
+    raw = os.environ.get("SHIYING_MAX_WORKERS", "").strip()
+    try:
+        value = int(raw) if raw else 5
+    except ValueError:
+        value = 5
+    return max(2, min(16, value))
+
+
 manager = DownloadManager(
     state_dir=DATA_DIR / "state",
     default_output_root=config.download_dir,
+    # 批量验收并发：匿名下载为主，5 路在速度与平台风控之间取平衡。
+    max_workers=_max_download_workers(),
     organized_output=True,
     downloader_config=DownloaderConfig(
         filename_limit=96,
@@ -213,15 +255,62 @@ manager = DownloadManager(
         temporary_root=str(PROJECT_ROOT / "cache"),
         cookie_browser="chrome" if config.use_chrome_cookies else None,
         cookie_profile=config.chrome_profile,
+        # 与下方搜索路由使用同一个 Profile；没有显式 Chrome Cookie 时下载引擎
+        # 复用它的登录态，打通「搜得到却下不下来」的通道。
+        search_profile_dir=str(DATA_DIR / "search-profile"),
     ),
 )
+
+INDEX_DB_PATH = DATA_DIR / "index" / "jobs.sqlite"
+indexer = JobIndexer(
+    DATA_DIR / "state",
+    INDEX_DB_PATH,
+    enabled=config.index_enabled,
+)
+_capability_cache: tuple[float, str, CapabilityRegistry] | None = None
+
+
+def _bundled_capabilities_path() -> Path | None:
+    bundle_root = getattr(sys, "_MEIPASS", None)
+    if not bundle_root:
+        return None
+    candidate = Path(bundle_root) / "data" / "capabilities.json"
+    return candidate if candidate.is_file() else None
+
+
+def _capabilities() -> CapabilityRegistry:
+    global _capability_cache
+    path = Path(config.capabilities_path)
+    # 相对路径按项目根解析，与 load_capabilities 保持一致；不要依赖进程 cwd。
+    candidate = path if path.is_absolute() else PROJECT_ROOT / path
+    if not candidate.is_file():
+        # 配置指向不存在的登记文件（误操作、滚动更新残留）不能让所有平台一律
+        # 不可用、把整个下载功能锁死成 422；文件缺失时回退到项目自带的默认登记。
+        default_paths = [PROJECT_ROOT / "data" / "capabilities.json"]
+        bundled_path = _bundled_capabilities_path()
+        if bundled_path is not None:
+            default_paths.append(bundled_path)
+        for default_path in default_paths:
+            if default_path.is_file():
+                path = default_path
+                break
+    now = time.monotonic()
+    if (
+        _capability_cache is not None
+        and now - _capability_cache[0] < 2.0
+        and _capability_cache[1] == str(path)
+    ):
+        return _capability_cache[2]
+    registry = load_capabilities(path, root=PROJECT_ROOT)
+    _capability_cache = (now, str(path), registry)
+    return registry
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     yield
     # 视频号代理已移除，关闭时无需额外清理。
-    
+    indexer.close()
     manager.shutdown(wait=True, cancel_running=True)
 
 
@@ -381,11 +470,18 @@ def _http_error(exc: Exception) -> HTTPException:
 def _redact_public_url(value: str) -> str:
     try:
         parsed = urlsplit(value)
-        if parsed.hostname in {"kuaishou.com", "www.kuaishou.com", "v.kuaishou.com", "m.gifshow.com"}:
+        if parsed.hostname in {
+            "kuaishou.com",
+            "www.kuaishou.com",
+            "v.kuaishou.com",
+            "m.gifshow.com",
+            # 微信媒直链的 encfilekey/token 是签名参数，公开接口只暴露裸 URL。
+            "finder.video.qq.com",
+        }:
             return urlunsplit(parsed._replace(query="", fragment=""))
     except (TypeError, ValueError):
         pass
-    if "xsec_token" not in value.lower():
+    if not any(field in value.lower() for field in PUBLIC_SENSITIVE_QUERY_FIELDS):
         return value
     try:
         parsed = urlsplit(value)
@@ -404,12 +500,15 @@ def _redact_public_url(value: str) -> str:
             )
         )
     except (TypeError, ValueError):
-        return re.sub(
-            r"([?&])xsec_token=[^&#]*&?",
-            lambda match: match.group(1) if match.group(0).endswith("&") else "",
-            value,
-            flags=re.IGNORECASE,
-        )
+        redacted = value
+        for field in PUBLIC_SENSITIVE_QUERY_FIELDS:
+            redacted = re.sub(
+                rf"([?&]){re.escape(field)}=[^&#]*&?",
+                lambda match: match.group(1) if match.group(0).endswith("&") else "",
+                redacted,
+                flags=re.IGNORECASE,
+            )
+        return redacted
 
 
 def _redact_public_value(value):
@@ -489,6 +588,9 @@ def _request_process_stop() -> None:
     # Let the HTTP response leave the socket before Uvicorn begins shutdown.
     time.sleep(0.1)
     RUNTIME_STOP_EVENT.set()
+    # 唤醒挂在 take() 里的 SSE 生成器，让它们在 graceful shutdown 超时前
+    # 自行走到循环顶部的 stop 检查并关流，避免被 uvicorn 取消抛 CancelledError。
+    wake_all()
 
 
 def _stop_token_matches(supplied_token: str, expected_token: str) -> bool:
@@ -535,7 +637,14 @@ def get_config() -> AppConfig:
 
 @app.get("/api/environment")
 def environment_status() -> dict:
-    return check_environment(get_config().download_dir)
+    result = check_environment(get_config().download_dir)
+    result["capabilities_impact"] = environment_impact(result.get("checks") or [])
+    return result
+
+
+@app.get("/api/platforms")
+def list_platforms() -> list[dict]:
+    return [entry.model_dump() for entry in _capabilities().all()]
 
 
 CACHE_DIR = PROJECT_ROOT / "cache"
@@ -623,7 +732,7 @@ def clear_cache() -> dict:
                     f"还有 {len(busy)} 个任务正在下载，请先完成或取消它们再清理。"
                 ),
             )
-        _, freed = _cache_usage()
+        _, bytes_before = _cache_usage()
         snapshot = list(CACHE_DIR.iterdir()) if CACHE_DIR.is_dir() else []
     for entry in snapshot:
         try:
@@ -633,23 +742,54 @@ def clear_cache() -> dict:
                 shutil.rmtree(entry, ignore_errors=True)
         except OSError:
             continue
-    # 清理必须立刻反映在界面上：作废 TTL 快照后重扫一次。
+    # 清理必须立刻反映在界面上：作废 TTL 快照后重算，保证数值一致。
     _invalidate_cache_usage()
-    return {"freed_bytes": freed, "files": _cache_usage()[0]}
+    files_after, bytes_after = _cache_usage()
+    return {
+        "freed_bytes": bytes_before - bytes_after,
+        "files": files_after,
+        "bytes_before": bytes_before,
+        "bytes_after": bytes_after,
+    }
 
 
 @app.put("/api/config", response_model=AppConfig)
 def update_config(request: AppConfig) -> AppConfig:
     global config
     request = request.model_copy(deep=True)
+    # 拒绝把能力登记路径指向不存在的文件：该错误配置会让 _capabilities()
+    # 把所有平台判为不可用，进而让任务创建一律返回 422。
+    capability_file = Path(request.capabilities_path)
+    if not capability_file.is_absolute():
+        capability_file = PROJECT_ROOT / capability_file
+    bundled_default = (
+        _bundled_capabilities_path()
+        if Path(request.capabilities_path) == Path("data/capabilities.json")
+        else None
+    )
+    if not capability_file.is_file() and bundled_default is None:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Capability registry file does not exist: {request.capabilities_path}",
+        )
     output_dir = Path(request.download_dir)
     with _CONFIG_LOCK:
         if request.chrome_profile != config.chrome_profile:
             profile = (request.chrome_profile or "").strip()
             if profile and not re.fullmatch(r"(?:Default|Profile [1-9][0-9]*)", profile):
+                # 抖音/快手/小红书的登录态不通过 chrome_profile 路径接入：它由
+                # 应用自管的 search-profile 承载，任务发现时会自动复用。给出明确
+                # 指引，避免用户把 Profile 目录的绝对路径填到这里（也不接受任意
+                # 路径，防止 cookie 提取的路径注入）。
                 raise HTTPException(
                     status_code=422,
-                    detail="Chrome Profile must be Default or Profile N",
+                    detail=(
+                        "Chrome Profile must be Default or Profile N. To use Douyin, "
+                        "Kuaishou or Xiaohongshu login state, sign in once under "
+                        "Settings → AI Search → Search login state; the app stores it "
+                        "in its own profile and reuses it automatically. Do not enter "
+                        "a filesystem path here."
+                    ),
                 )
             request.chrome_profile = profile or None
         try:
@@ -671,6 +811,7 @@ def update_config(request: AppConfig) -> AppConfig:
                 ),
             ) from exc
         config = request
+        indexer.enabled = request.index_enabled
         manager.default_output_root = output_dir
         manager.downloader_config.cookie_browser = (
             "chrome" if request.use_chrome_cookies else None
@@ -679,19 +820,114 @@ def update_config(request: AppConfig) -> AppConfig:
         return config.model_copy(deep=True)
 
 
+_LINK_RE = re.compile(r"https?://[^\s<>\"'，。；、）】]+")
+
+# YouTube 是公开平台，下载链路不需要浏览器登录态；强行带 cookie_browser 会让
+# 下载器去找并不存在的 Chrome Cookie 而失败（tests/test_config.py:165）。
+# 其余平台（含 requires_login=false 的哔哩哔哩/抖音图文）仍遵循用户开启的全局开关。
+_NO_CHROME_COOKIE_PLATFORMS = frozenset({Platform.YOUTUBE})
+
+
+def _extract_paste(text: str) -> tuple[list[str], int]:
+    links: list[str] = []
+    for raw in _LINK_RE.findall(text or ""):
+        link = raw.rstrip(").,;:!?'\"，。；、）】")
+        if link and link not in links:
+            links.append(link)
+    leftover = _LINK_RE.sub(" ", text or "")
+    ignored_text_count = sum(1 for line in leftover.splitlines() if line.strip())
+    return links, ignored_text_count
+
+
 @app.post("/api/jobs", status_code=201)
 def create_job(request: CreateJobRequest):
     snapshot = get_config()
+    links, ignored_text_count = _extract_paste(request.url)
+    paste_text = getattr(request, "paste_text", None)
+    if paste_text:
+        # 只取统计，不把 paste_text 里的链接当成任务：任务仍由上面已解析的 url 创建，
+        # 否则「一次 POST 一个任务」的前端记账会被破坏。
+        _, ignored_text_count = _extract_paste(paste_text)
+    if not links:
+        links = [request.url.strip()]
     try:
+        valid: list[tuple[str, object]] = []
+        unrecognized: list[str] = []
+        for link in links:
+            try:
+                url_info = identify_url(link)
+            except Exception:
+                unrecognized.append(link)
+                continue
+            allowed, status_code, code, message = creation_policy(
+                _capabilities(),
+                url_info.platform.value,
+                confirmed=request.confirmed_experimental,
+            )
+            if not allowed:
+                raise HTTPException(
+                    status_code=status_code,
+                    detail={"code": code, "message": message},
+                )
+            valid.append((link, url_info))
+        if not valid:
+            if len(links) == 1:
+                identify_url(links[0])
+            raise UnsupportedUrlError("No supported link found")
+
         create_kwargs = {
             "output_root": snapshot.download_dir,
-            "cookie_browser": "chrome" if snapshot.use_chrome_cookies else None,
             "cookie_profile": snapshot.chrome_profile,
             "auto_start": request.auto_start,
         }
         if request.item_ids is not None:
             create_kwargs["target_item_ids"] = request.item_ids
-        return _public_job(manager.create_job(request.url, **create_kwargs))
+        list_jobs = getattr(manager, "list_jobs", None)
+        existing = (
+            {_source_key(job.platform, job.source_url) for job in list_jobs()}
+            if callable(list_jobs)
+            else set()
+        )
+        # 同一批粘贴里 www./m. 等不同域名可能规范化成同一作品（_source_key）。
+        # 按规范化键只保留第一条：后续链接记入 duplicates 且不再创建任务。
+        # 存量重复仍沿用原语义——只提示不拦截（前端已就「仍然下载」确认过）。
+        seen_in_batch: set[str] = set()
+        duplicates: list[str] = []
+        selected: list[tuple[str, object]] = []
+        for link, url_info in valid:
+            key = _source_key(url_info.platform, url_info.url)
+            if key in seen_in_batch:
+                duplicates.append(link)
+                continue
+            seen_in_batch.add(key)
+            if key in existing:
+                duplicates.append(link)
+            selected.append((link, url_info))
+        created = []
+        for link, url_info in selected:
+            kwargs = dict(create_kwargs)
+            # 全局开关对除 YouTube 外的平台生效：抖音/B站等虽有
+            # requires_login=false，个别作品仍依赖 Cookie；YouTube 公开下载带
+            # cookie_browser 反而会找不到登录态而失败。
+            kwargs["cookie_browser"] = (
+                "chrome"
+                if snapshot.use_chrome_cookies
+                and url_info.platform not in _NO_CHROME_COOKIE_PLATFORMS
+                else None
+            )
+            created.append(manager.create_job(link, **kwargs))
+        public = _public_job(created[0])
+        payload = (
+            public.model_dump(mode="json")
+            if hasattr(public, "model_dump")
+            else dict(public)
+        )
+        payload["ignored_text_count"] = ignored_text_count
+        payload["unrecognized_samples"] = unrecognized[:5]
+        payload["duplicates"] = duplicates[:50]
+        return payload
+    except HTTPException:
+        raise
     except Exception as exc:
         raise _http_error(exc) from exc
 
@@ -709,14 +945,33 @@ def preview_link(request: PreviewRequest):
                     "「解析并下载」，任务列表会显示解析进度，可以随时暂停。"
                 ),
             )
+        cookie_browser = (
+            "chrome"
+            if snapshot.use_chrome_cookies
+            and url_info.platform not in _NO_CHROME_COOKIE_PLATFORMS
+            else None
+        )
         engine = MediaDownloader(
             config=DownloaderConfig(
-                cookie_browser="chrome" if snapshot.use_chrome_cookies else None,
+                cookie_browser=cookie_browser,
                 cookie_profile=snapshot.chrome_profile,
+                # 与 manager / 搜索路由共用同一个 Profile：无显式 Chrome Cookie 时
+                # 预览也要复用 AI 搜索登录态，否则小红书预览会被误判为未登录。
+                search_profile_dir=str(DATA_DIR / "search-profile"),
                 anonymous_douyin=True,
             )
         )
-        result = engine.discover(url_info.url, url_info.platform, url_info.kind)
+        provider = provider_for(url_info.platform, engine=engine)
+        auth = provider.prepare_session(
+            SessionContext(
+                use_chrome_cookies=bool(
+                    snapshot.use_chrome_cookies and cookie_browser is not None
+                ),
+                cookie_browser=cookie_browser,
+                cookie_profile=snapshot.chrome_profile,
+            )
+        )
+        result = provider.discover(UrlInfo(**url_info.model_dump()), auth)
         items_data = [
             {
                 "id": item.id,
@@ -761,6 +1016,11 @@ def _source_key(platform: Platform, url: str) -> str:
     host = parsed.netloc.lower()
     if host.startswith("www."):
         host = host[4:]
+    elif host.startswith("m."):
+        # m.bilibili.com 等移动端域名与桌面端指向同一作品。若保留 m. 前缀，
+        # 同一作品用不同分享域名会生成两个不同的去重键，重复检测放行第二个
+        # 任务，造成同一作品被重复下载。
+        host = host[2:]
     if platform == Platform.YOUTUBE:
         video_id = dict(parse_qsl(parsed.query)).get("v")
         if video_id:
@@ -803,9 +1063,122 @@ def find_existing_job(url: str):
     return {"exists": False, "job": None}
 
 
+_LIBRARY_SORTS = frozenset({"created_desc", "created_asc"})
+_LIBRARY_MEDIA_TYPES = frozenset({"video", "image", "unknown", "mixed"})
+
+
+def _invalid_input(message: str) -> HTTPException:
+    return HTTPException(
+        status_code=400,
+        detail={"code": "invalid_input", "message": message},
+    )
+
+
+def _library_item(entry) -> LibraryItem | None:
+    if not entry.file_paths:
+        return None
+    missing = 0
+    for raw in entry.file_paths:
+        try:
+            if not Path(raw).is_file():
+                missing += 1
+        except OSError:
+            missing += 1
+    if missing == len(entry.file_paths):
+        return None
+    return LibraryItem(
+        id=entry.job_id,
+        title=entry.title,
+        platform=entry.platform,
+        media_type=entry.media_type,
+        status=entry.status,
+        author=entry.author or None,
+        created_at=entry.created_at,
+        output_dir=entry.output_dir,
+        total_items=entry.total_items,
+        completed_items=entry.completed_items,
+        failed_items=entry.failed_items,
+        total_bytes=entry.total_bytes,
+        missing_files=missing,
+        cover_url=f"/api/jobs/{entry.job_id}/cover",
+    )
+
+
+def _library_page(
+    *,
+    q: str,
+    platform: str | None,
+    media_type: str | None,
+    sort: str,
+    cursor: str | None,
+    limit: int,
+) -> LibraryPage:
+    if not 1 <= limit <= 100:
+        raise _invalid_input("limit 必须在 1 到 100 之间")
+    if sort not in _LIBRARY_SORTS:
+        raise _invalid_input("sort 仅支持 created_desc 或 created_asc")
+    if platform:
+        try:
+            Platform(platform)
+        except ValueError:
+            raise _invalid_input("未知平台") from None
+    if media_type and media_type not in _LIBRARY_MEDIA_TYPES:
+        raise _invalid_input("media_type 仅支持 video、image、unknown 或 mixed")
+
+    status = indexer.refresh()
+    if status == STATUS_READY:
+        entries, next_cursor, total = indexer.query(
+            q=q,
+            platform=platform,
+            media_type=media_type,
+            sort=sort,
+            cursor=cursor,
+            limit=limit,
+            exists_only=True,
+        )
+    else:
+        fallback_entries = [entry_from_job(job) for job in manager.list_jobs()]
+        entries, next_cursor, total = filter_entries(
+            fallback_entries,
+            q=q,
+            platform=platform,
+            media_type=media_type,
+            sort=sort,
+            cursor=cursor,
+            limit=limit,
+            exists_only=True,
+        )
+    items = [item for entry in entries if (item := _library_item(entry)) is not None]
+    return LibraryPage(
+        items=items,
+        next_cursor=next_cursor,
+        total_estimate=total,
+        index_status=status,
+    )
+
+
 @app.get("/api/jobs")
-def list_jobs():
-    return [_public_job(job) for job in manager.list_jobs()]
+def list_jobs(
+    view: str | None = None,
+    q: str = "",
+    platform: str | None = None,
+    media_type: str | None = None,
+    sort: str = "created_desc",
+    cursor: str | None = None,
+    limit: int = 50,
+):
+    if view is None:
+        return [_public_job(job) for job in manager.list_jobs()]
+    if view != "library":
+        raise _invalid_input("view 仅支持 library")
+    return _library_page(
+        q=q,
+        platform=platform,
+        media_type=media_type,
+        sort=sort,
+        cursor=cursor,
+        limit=limit,
+    )
 
 
 @app.get("/api/jobs/{job_id}")
@@ -814,6 +1187,17 @@ def get_job(job_id: str):
         return _public_job(manager.get_job(job_id))
     except Exception as exc:
         raise _http_error(exc) from exc
+
+
+@app.get("/api/jobs/{job_id}/export")
+def export_job_diagnostics(job_id: str):
+    try:
+        job = manager.get_job(job_id)
+    except JobNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Job not found") from exc
+    except Exception as exc:
+        raise _http_error(exc) from exc
+    return build_diagnostic_package(job, app_version=APP_VERSION, build_id=BUILD_ID)
 
 
 THUMBNAILS_DIR = PROJECT_ROOT / "data" / "thumbnails"
@@ -1336,12 +1720,36 @@ def open_verification(job_id: str) -> dict[str, str]:
 
 
 @app.get("/api/events")
-async def events() -> StreamingResponse:
+async def events(since: int | None = None) -> StreamingResponse:
     async def stream() -> AsyncIterator[str]:
-        messages = JobEventBuffer()
-        manager.add_listener(messages.publish)
+        # 快照与订阅在同一读锁内完成，避免重连窗口丢事件；测试桩无锁时退化为顺序执行。
+        with getattr(manager, "_lock", contextlib.nullcontext()):
+            messages = JobEventBuffer()
+            manager.add_listener(messages.publish)
+            snapshot_jobs = manager.list_jobs() if since is not None else []
+        # revision 是每个任务独立递增的计数，不存在全局递增序列；用单个 since
+        # 标量过滤所有任务的增量会把低 revision 任务的更新永久丢弃。重连快照
+        # 给出了每个任务的当前 revision，以此建立 per-job 水位：快照中已有的
+        # 任务只推送更新的 revision，快照后新建的任务必须推送。
+        since_by_job: dict[str, int] = {}
         try:
             yield ": connected\n\n"
+            if since is not None:
+                since_by_job = {job.id: job.revision for job in snapshot_jobs}
+                snapshot = [_public_job(job).model_dump(mode="json") for job in snapshot_jobs]
+                max_revision = max(
+                    (job.revision for job in snapshot_jobs),
+                    default=since,
+                )
+                payload = json.dumps(
+                    {
+                        "since": since,
+                        "max_revision": max(max_revision, since),
+                        "jobs": snapshot,
+                    },
+                    ensure_ascii=False,
+                )
+                yield f"event: snapshot\ndata: {payload}\n\n"
             while not RUNTIME_STOP_EVENT.is_set():
                 try:
                     jobs = await messages.take()
@@ -1349,6 +1757,11 @@ async def events() -> StreamingResponse:
                     yield ": keepalive\n\n"
                     continue
                 for job in jobs:
+                    if since is not None:
+                        baseline = since_by_job.get(job.id)
+                        if baseline is not None and job.revision <= baseline:
+                            continue
+                        since_by_job[job.id] = job.revision
                     payload = json.dumps(
                         _public_job(job).model_dump(mode="json"),
                         ensure_ascii=False,

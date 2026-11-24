@@ -30,6 +30,7 @@ from .base import (
     SessionAuth,
     SessionContext,
 )
+from .registry import build_provider_registry, provider_for
 
 __all__ = [
     "Platform",
@@ -45,4 +46,6 @@ __all__ = [
     "ProviderRegistry",
     "SessionAuth",
     "SessionContext",
+    "build_provider_registry",
+    "provider_for",
 ]

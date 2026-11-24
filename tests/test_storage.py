@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from app.models import DownloadJob, Platform, SourceKind
+from app.models import DownloadItem, DownloadJob, Platform, SourceKind
 from app.storage import JobNotFoundError, JsonJobStore
 
 
@@ -52,6 +52,47 @@ def test_store_skips_corrupt_state_and_returns_warning(tmp_path) -> None:
     assert [job.id for job in jobs] == ["healthy"]
     assert len(warnings) == 1
     assert "broken.json" in warnings[0]
+
+
+def test_save_omits_transient_media_urls_without_mutating_memory(tmp_path) -> None:
+    store = JsonJobStore(tmp_path)
+    job = make_job()
+    signed_url = "https://cdn.example.com/media.mp4?token=secret&expires=123"
+    job.items.append(
+        DownloadItem(
+            id="item-1",
+            source_url="https://www.douyin.com/video/1234567890123456",
+            metadata={
+                "douyin_item_media": {
+                    "media_id": "1234567890123456",
+                    "video_uri": "v0300identity",
+                    "candidates": [signed_url],
+                    "direct_candidates": [
+                        {
+                            "width": 1080,
+                            "height": 1920,
+                            "urls": [signed_url],
+                            "bit_rate": 2_000_000,
+                        }
+                    ],
+                },
+                "wechat_media_url": signed_url,
+                "wechat_decode_key": "secret-key",
+            },
+        )
+    )
+
+    store.save(job)
+
+    raw = (tmp_path / "job-1.json").read_text(encoding="utf-8")
+    assert "secret" not in raw and "expires" not in raw
+    persisted = store.get(job.id)
+    cached = persisted.items[0].metadata["douyin_item_media"]
+    assert cached["media_urls_persisted"] is False
+    assert cached["direct_candidates"][0]["width"] == 1080
+    assert "urls" not in cached["direct_candidates"][0]
+    assert job.items[0].metadata["douyin_item_media"]["candidates"] == [signed_url]
+    assert job.items[0].metadata["wechat_decode_key"] == "secret-key"
 
 
 def test_save_replaces_existing_state_atomically(tmp_path) -> None:

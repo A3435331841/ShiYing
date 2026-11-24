@@ -189,8 +189,11 @@ def profile_yuanbao(url, cookie):
             valid_port = False
         if (p.scheme != 'https' or p.hostname != 'channels.weixin.qq.com'
                 or p.username is not None or p.password is not None or not valid_port):
-            raise WeChatUserError('腾讯未返回播放信息。图集、直播回放等非视频作品暂不支持，'
-                                  '普通视频请更新腾讯元宝 Cookie 后重试。')
+            # playable_url 无效通常是分享码失效、作品不可见，或图集/直播回放
+            # 等非视频作品——与腾讯元宝登录态是否有效无关。不要用「更新 Cookie」
+            # 措辞误导用户反复重配登录态，也不要让它被归类为 cookie_unavailable。
+            raise WeChatUserError('该作品不可见或不是可下载的视频（图集、直播回放暂不支持），'
+                                  '未取得有效播放信息。请核对分享链接，或从原作品重新复制完整链接后重试。')
         query = parse_qs(p.query)
         token, eid = query.get('token', [''])[0], query.get('eid', [''])[0]
         if not token or not eid:

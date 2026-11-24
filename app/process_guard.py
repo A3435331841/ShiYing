@@ -33,6 +33,8 @@ def _live_process_group_members(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
+            errors="replace",
         )
         stdout, _ = helper.communicate(timeout=2.0)
     except OSError:

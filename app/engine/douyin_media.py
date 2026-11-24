@@ -1240,6 +1240,11 @@ class DouyinMediaMixin:
                 "from the original video and retry; Chrome verification was not "
                 "requested."
             )
+        if cached.get("media_urls_persisted") is False:
+            raise DouyinMediaRefreshRequiredError(
+                "Saved Douyin media URLs were omitted for safety; refresh the "
+                "current item from its original task link."
+            )
         cached_id = str(cached.get("media_id") or "").strip()
         if cached_id != expected_id:
             self._raise_douyin_mismatch(
@@ -1326,6 +1331,11 @@ class DouyinMediaMixin:
                 "profile to refresh it; Chrome verification is not required for "
                 "this local metadata error.",
                 issue_code=SiteIssueCode.SITE_RESPONSE_CHANGED,
+            )
+        if cached.get("media_urls_persisted") is False:
+            raise DouyinMediaRefreshRequiredError(
+                "Saved Douyin media URLs were omitted for safety; refresh the "
+                "current item from its original task link."
             )
         cached_id = str(cached.get("media_id") or "").strip()
         if cached_id != expected_id:
@@ -1426,6 +1436,11 @@ class DouyinMediaMixin:
         item_cached = item.metadata.get("douyin_item_media")
         profile_cached = item.metadata.get("douyin_profile_media")
         cached = item_cached if isinstance(item_cached, dict) else profile_cached
+        if isinstance(cached, dict) and cached.get("media_urls_persisted") is False:
+            raise DouyinMediaRefreshRequiredError(
+                "Saved Douyin media URLs were omitted for safety; refresh the "
+                "current item from its original task link."
+            )
         is_bound_item = (
             isinstance(item_cached, dict)
             and item.metadata.get("item_identity_verified") is True

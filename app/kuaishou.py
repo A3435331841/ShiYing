@@ -622,7 +622,15 @@ def parse_video(
     if not re.fullmatch(ID_PATTERN, media_id) or not re.fullmatch(
         ID_PATTERN, author_id
     ):
-        raise DiscoveryError("Kuaishou returned missing video or author identity")
+        # 身份字段缺失通常意味着匿名请求撞上登录墙/风控页，页面没有返回可用的
+        # visionVideoDetail 数据（实测 APOLLO_STATE 为空、body 为 result:2）。
+        # 带上有意义的固定归类，避免落到 issue_code=unknown 让排障无从下手。
+        # 用 DiscoveryError（而非 AuthenticationRequiredError）保留 failed 语义，
+        # 不会误转成 needs_auth，也不会触发快手 SITE_RESPONSE_CHANGED 的队列暂停。
+        raise DiscoveryError(
+            "Kuaishou returned missing video or author identity",
+            issue_code=SiteIssueCode.LOGIN_REQUIRED,
+        )
     if expected_id and media_id != expected_id:
         raise DiscoveryError(
             "Kuaishou returned a different video; the response was blocked"
@@ -1011,7 +1019,16 @@ def discover(
     if status_callback:
         status_callback("Opening Kuaishou in Chrome to read verified video metadata")
     with sync_playwright() as playwright:
-        browser = playwright.chromium.launch(channel="chrome", headless=True)
+        # 实测（2026-11）：快手会识别 headless 并直接返回风控响应
+        # {"result":2}（APOLLO_STATE 为空、无 graphql 数据），导致作品解析全部
+        # 失败。与搜索后端一致，改用有头 Chrome 并把窗口移到屏幕外：既避免
+        # headless 指纹被拦截，又不打扰用户。这不是绕过验证码——遇到显式
+        # 验证/登录页仍由 response_error 正常分类处理。
+        browser = playwright.chromium.launch(
+            channel="chrome",
+            headless=False,
+            args=["--window-position=-32000,-32000", "--window-size=1280,900"],
+        )
         try:
             context = browser.new_context(
                 user_agent=("Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile/15E148" if kind == "short_link" or urlsplit(url).hostname in {"m.gifshow.com", "m.kuaishou.com", "c.kuaishou.com"} or (urlsplit(url).hostname or "").endswith(".m.chenzhongtech.com") else chrome_user_agent(browser.version)),

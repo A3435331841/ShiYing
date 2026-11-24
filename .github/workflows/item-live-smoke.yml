@@ -1,13 +1,8 @@
 name: Douyin item live smoke
 
+# Live smoke 依赖真实平台登录态与生产 Chrome、耗时 30-85 分钟，仅手动触发。
+# 原先绑定已不存在的临时工作分支的 push 触发是死配置，已移除。
 on:
-  push:
-    branches:
-      - codex/douyin-two-video-fix
-    paths:
-      - app/**
-      - scripts/douyin_item_live_smoke.py
-      - .github/workflows/item-live-smoke.yml
   workflow_dispatch:
     inputs:
       urls:
@@ -32,6 +27,11 @@ on:
         required: false
         type: boolean
         default: false
+      baseline_ref:
+        description: Git ref for the diagnostic baseline job (must exist in this repository)
+        required: false
+        type: string
+        default: v0.3.0
 
 permissions:
   contents: read
@@ -45,8 +45,8 @@ jobs:
       fail-fast: false
       matrix:
         os:
+          # macOS runner 在本账号不可用，与 tests.yml 的矩阵口径保持一致。
           - ubuntu-24.04
-          - macos-14
     steps:
       - uses: actions/checkout@v7
         with:
@@ -95,7 +95,7 @@ jobs:
         env:
           OBSERVE_PROFILE_ITEM_URL: ${{ inputs.observe_profile_item_url }}
         run: |
-          python scripts/douyin_item_live_smoke.py \
+          python scripts/dev/douyin_item_live_smoke.py \
             --observe-profile-item-url "$OBSERVE_PROFILE_ITEM_URL" \
             --report "$RUNNER_TEMP/douyin-profile-observation.json"
       - name: Upload sanitized page observations separately
@@ -118,7 +118,7 @@ jobs:
           import os
           import subprocess
           import sys
-          command = [sys.executable, "scripts/douyin_item_live_smoke.py",
+          command = [sys.executable, "scripts/dev/douyin_item_live_smoke.py",
                      "--report", os.path.join(os.environ["RUNNER_TEMP"], "douyin-item-report.json")]
           for url in os.environ["INPUT_URLS"].split():
               command.extend(["--url", url])
@@ -138,7 +138,7 @@ jobs:
           retention-days: 7
 
   baseline:
-    name: Baseline v1.2.19 / ubuntu-24.04 (diagnostic)
+    name: Baseline ${{ inputs.baseline_ref || 'v0.3.0' }} / ubuntu-24.04 (diagnostic)
     runs-on: ubuntu-24.04
     timeout-minutes: 85
     continue-on-error: true
@@ -149,7 +149,7 @@ jobs:
       - name: Check out previous production version
         uses: actions/checkout@v7
         with:
-          ref: 2098023f83f05a26a1d4466486e827c8f8641e01
+          ref: ${{ inputs.baseline_ref || 'v0.3.0' }}
           path: baseline
           persist-credentials: false
       - uses: actions/setup-python@v7
@@ -166,7 +166,9 @@ jobs:
           fi
           python -m pip install -r baseline/requirements.txt
           python -m pip check
-          cp scripts/douyin_item_live_smoke.py baseline/scripts/douyin_item_live_smoke.py
+          # 诊断脚本用 parents[2] 定位仓库根，必须放到 dev/ 下；baseline 检出可能没有该目录。
+          mkdir -p baseline/scripts/dev
+          cp scripts/dev/douyin_item_live_smoke.py baseline/scripts/dev/douyin_item_live_smoke.py
       - name: Verify baseline import and production Chrome channel
         working-directory: baseline
         run: |
@@ -191,7 +193,7 @@ jobs:
           import os
           import subprocess
           import sys
-          command = [sys.executable, "scripts/douyin_item_live_smoke.py",
+          command = [sys.executable, "scripts/dev/douyin_item_live_smoke.py",
                      "--report", os.path.join(os.environ["RUNNER_TEMP"], "douyin-item-baseline-report.json")]
           for url in os.environ["INPUT_URLS"].split():
               command.extend(["--url", url])

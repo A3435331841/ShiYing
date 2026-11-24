@@ -16,6 +16,7 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +32,11 @@ from ..models import SearchHit
 
 MAX_OUTPUT_BYTES = 8 * 1024 * 1024
 DEFAULT_TIMEOUT_SECONDS = 40.0
+# doctor 是无网络的本地探测，但状态接口可能被频繁请求，缓存一小段时间。
+_STATUS_CACHE_TTL_SECONDS = 120.0
+_channel_status_cache: tuple[float, dict[str, dict[str, Any]]] | None = None
+# doctor 认为这些状态代表渠道已接入（unverified = 已接入但未实测）。
+_READY_CHANNEL_STATUSES = frozenset({"ready", "verified", "unverified"})
 
 CHANNEL_BY_PLATFORM: dict[Platform, str] = {
     Platform.BILIBILI: "bilibili",
@@ -183,6 +189,22 @@ class AgentReachBackend:
     def available(self) -> bool:
         return bool(self._executable)
 
+    def channel_ready(self, platform: Platform) -> bool:
+        """Whether this platform's Agent-Reach channel is actually usable.
+
+        The executable can exist while a channel is still not_added/needs_setup;
+        calling such a channel only burns timeouts before falling back. doctor is
+        local-only and cached, so this check is cheap.
+        """
+
+        channel = CHANNEL_BY_PLATFORM.get(platform)
+        if not channel or not self._executable:
+            return False
+        channels = _probe_channel_status(self._executable)
+        if not channels:
+            return True  # 探测失败时保守允许，由实际调用决定
+        return channels.get(channel, {}).get("status") in _READY_CHANNEL_STATUSES
+
     def search(self, platform: Platform, keyword: str, limit: int = 10) -> list[SearchHit]:
         channel = CHANNEL_BY_PLATFORM.get(platform)
         if channel is None:
@@ -280,11 +302,61 @@ class AgentReachBackend:
         return hits
 
 
+def _probe_channel_status(executable: str) -> dict[str, dict[str, Any]] | None:
+    """Read per-channel readiness via `agent-reach doctor` (no network)."""
+
+    global _channel_status_cache
+    now = time.monotonic()
+    if (
+        _channel_status_cache is not None
+        and now - _channel_status_cache[0] < _STATUS_CACHE_TTL_SECONDS
+    ):
+        return _channel_status_cache[1]
+    try:
+        completed = subprocess.run(
+            [executable, "doctor"],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=15,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        _channel_status_cache = (now, {})
+        return {}
+    stdout = completed.stdout or ""
+    if len(stdout) > MAX_OUTPUT_BYTES:
+        _channel_status_cache = (now, {})
+        return {}
+    payload = _parse_json_output(stdout)
+    result = payload.get("result") if isinstance(payload, dict) else None
+    channels = result.get("channels") if isinstance(result, dict) else None
+    if not isinstance(channels, list):
+        _channel_status_cache = (now, {})
+        return {}
+    parsed: dict[str, dict[str, Any]] = {}
+    for entry in channels:
+        if not isinstance(entry, dict):
+            continue
+        name = str(entry.get("channel") or "").strip()
+        if not name:
+            continue
+        problems = entry.get("problems")
+        parsed[name] = {
+            "status": str(entry.get("status") or ""),
+            "problems": [str(p) for p in problems if p] if isinstance(problems, list) else [],
+            "hint": str(entry.get("hint") or ""),
+        }
+    _channel_status_cache = (now, parsed)
+    return parsed
+
+
 def status() -> dict[str, Any]:
-    """供设置页展示：是否安装、可执行文件路径。"""
+    """供设置页展示：安装情况与各搜索渠道的真实就绪状态。"""
 
     executable = find_agent_reach()
-    return {
+    result: dict[str, Any] = {
         "available": bool(executable),
         "executable": os.path.basename(executable) if executable else None,
         "install_hint": (
@@ -293,3 +365,23 @@ def status() -> dict[str, Any]:
             " 然后运行 agent-reach setup"
         ),
     }
+    if not executable:
+        return result
+    channels = _probe_channel_status(executable)
+    if not channels:
+        return result  # 探测失败时保守地只报告安装情况
+    result["channels"] = channels
+    ready = sorted(
+        channel
+        for channel in CHANNEL_BY_PLATFORM.values()
+        if channels.get(channel, {}).get("status") in _READY_CHANNEL_STATUSES
+    )
+    result["ready_channels"] = ready
+    # 状态接口反映真实可用的搜索渠道，而不是「可执行文件存在」。
+    result["available"] = bool(ready)
+    missing = [channel for channel in CHANNEL_BY_PLATFORM.values() if channel not in ready]
+    if missing:
+        result["install_hint"] = (
+            "运行 agent-reach add " + "、".join(missing) + " 安装缺失的渠道后端"
+        )
+    return result

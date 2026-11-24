@@ -1184,7 +1184,10 @@ def test_browser_single_item_no_user_cookies(monkeypatch):
     result = ks.discover(VIDEO)
     assert result.videos[0].media_id == "3xvideo1"
     assert result.complete and browser.closed
-    assert browser.launch_options == {"channel": "chrome", "headless": True}
+    # 有头 Chrome（窗口离屏）以避免被识别为 headless 而返回风控 result=2
+    assert browser.launch_options["channel"] == "chrome"
+    assert browser.launch_options["headless"] is False
+    assert "--window-position=-32000,-32000" in browser.launch_options["args"]
 
 
 def test_browser_profile_fixture_pagination_observation(monkeypatch):

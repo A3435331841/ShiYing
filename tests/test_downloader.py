@@ -7727,7 +7727,11 @@ def test_ytdlp_download_uses_uncapped_best_format_and_reports_progress(
     )
 
     options = FakeYoutubeDL.created_options[0]
-    assert options["format"] == "bestvideo*+bestaudio/best"
+    # YouTube 限制到 1080p，避免单文件数百 MB 超时；format_sort 不接受 "-res"。
+    assert options["format"] == (
+        "bv*[height<=1080]+ba/b[height<=1080]/bestvideo*+bestaudio/best"
+    )
+    assert "format_sort" not in options
     assert options["cookiesfrombrowser"] == ("chrome",)
     assert options["noplaylist"] is True
     assert options["overwrites"] is True
@@ -7739,7 +7743,8 @@ def test_ytdlp_download_uses_uncapped_best_format_and_reports_progress(
         "standalone",
         "item-1",
     )
-    assert "height" not in options["format"]
+    # YouTube 现在限制 1080p 并按体积择优，不再是无上限的 bestvideo*。
+    assert "height<=1080" in options["format"]
     progress = next(event.progress for event in events if event.event == "downloading")
     assert progress is not None
     assert progress.percent == 50.0

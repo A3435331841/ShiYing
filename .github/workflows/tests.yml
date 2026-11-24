@@ -16,10 +16,11 @@ jobs:
       fail-fast: false
       matrix:
         os:
-          # macos-14（ARM）运行器配置对当前账号不可用（Actions 注解：
+          # macOS 覆盖暂停：macos-14（ARM）在本账号不可用（Actions 注解
           # "The configuration 'macos-14-arm64-us-default' is not supported"），
-          # 改用 macos-13（Intel）。若 GitHub 侧放开限制可换回 macos-latest。
-          - macos-13
+          # macos-13（Intel）在 run 44636157985 / 44141841428 中四个作业均
+          # 排队 24h 后 cancelled，从未产出有效结果。先在可用的 Linux/Windows
+          # 上保证回归门禁；待 GitHub 侧 macOS runner 可用时再把标签加回矩阵。
           - ubuntu-latest
           - windows-latest
         python:

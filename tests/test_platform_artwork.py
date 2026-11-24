@@ -386,3 +386,16 @@ def test_platform_helpers_never_use_unknown_or_malicious_values_as_image_sources
         assert [element["tag"] for element in elements] == ["svg", "use"]
         assert elements[1]["attrs"] == {"href": "#i-film"}
         assert not any("src" in element["attrs"] for element in elements)
+
+
+def test_compact_composer_keeps_platform_links_visible():
+    """有任务时首页收起只压缩尺寸，不能隐藏平台官网入口。"""
+
+    css = (STATIC_ROOT / "redesign.css").read_text(encoding="utf-8")
+    compact = re.search(
+        r"#composer\.compact \.platform-row\s*\{([^}]*)\}", css
+    )
+    assert compact is not None
+    assert "display: none" not in compact.group(1)
+    assert "#composer.compact .platform-chip" in css
+    assert "#composer.compact .platform-icon" in css

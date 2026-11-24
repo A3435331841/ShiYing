@@ -37,6 +37,7 @@ from ..downloader import (
     safe_component,
     safe_external_error_message,
 )
+from ..engine.common import WINDOWS_MAX_PATH
 from ..douyin import (
     discover_item_metadata_from_profile,
     is_complete_profile_media_metadata,
@@ -66,9 +67,10 @@ from ..models import (
     Platform,
     SourceKind,
     TransferProgress,
+    UrlInfo,
     utc_now,
 )
-from ..platforms import identify_url
+from ..platforms import SessionContext, identify_url, provider_for
 from ..storage import JobNotFoundError, JsonJobStore
 from ..xiaohongshu import (
     xiaohongshu_note_id,
@@ -130,12 +132,19 @@ class DownloadManager(
                 return root
             item = item or job.items[0]
             if item.media_type == MediaType.IMAGE:
-                label = safe_component(item.title, fallback="图文作品", limit=72)
                 identity = safe_component(item.media_id or item.id, limit=32)
                 date = item.upload_date or "Unknown-Date"
                 if re.fullmatch(r"\d{8}", date):
                     date = f"{date[:4]}-{date[4:6]}-{date[6:]}"
                 date = safe_component(date, fallback="Unknown-Date", limit=20)
+                # 目录本身也要给文件名留出 MAX_PATH 余量；深层 root（长项目路径
+                # + 平台 + 作者）下必须动态缩短标题子目录，避免后续发布失败。
+                subdir_fixed = len(date) + len(identity) + 4  # "-" + " []"
+                label_limit = max(
+                    8,
+                    min(72, WINDOWS_MAX_PATH - 100 - len(str(root.absolute())) - 1 - subdir_fixed),
+                )
+                label = safe_component(item.title, fallback="图文作品", limit=label_limit)
                 return root / f"{date}-{label} [{identity}]"
             return root
         return platform_output_directory(job.platform, job.output_root, job.author)
@@ -583,18 +592,27 @@ class DownloadManager(
         target_item_ids: list[str] | None = None,
     ) -> DownloadJob:
         url_info = identify_url(url)
-        cookie_profile, cookie_profile_auto_selected = (
-            self._resolve_xiaohongshu_chrome_profile(
-                url_info.platform,
-                cookie_browser,
-                cookie_profile,
-                cookie_profile_auto_selected=(
-                    url_info.platform == Platform.XIAOHONGSHU
-                    and cookie_browser == "chrome"
-                    and cookie_profile is None
-                ),
+        try:
+            cookie_profile, cookie_profile_auto_selected = (
+                self._resolve_xiaohongshu_chrome_profile(
+                    url_info.platform,
+                    cookie_browser,
+                    cookie_profile,
+                    cookie_profile_auto_selected=(
+                        url_info.platform == Platform.XIAOHONGSHU
+                        and cookie_browser == "chrome"
+                        and cookie_profile is None
+                    ),
+                )
             )
-        )
+        except TemporaryAccessError as exc:
+            if str(exc) != XIAOHONGSHU_CHROME_PROFILE_ERROR:
+                raise
+            # 建任务时 Chrome profile 还没有小红书登录态不应直接拒绝：用户可以
+            # 先建任务（auto_start=false 尤其常见），稍后再在 Chrome 登录。真正
+            # 执行时 _queue_job/_run_job 会再次校验，并把任务置为 needs_auth 给出
+            # 具体登录指引。
+            cookie_profile, cookie_profile_auto_selected = cookie_profile, False
         root = Path(output_root or self.default_output_root).expanduser().resolve()
         root.mkdir(parents=True, exist_ok=True)
         job = DownloadJob(
@@ -765,6 +783,7 @@ class DownloadManager(
         )
         return self.get_job(job_id)
     def resume_job(self, job_id: str) -> DownloadJob:
+        self._await_stopped_future(job_id)
         with self._lock:
             job = self._require_job(job_id)
             self._ensure_not_running(job_id)
@@ -794,10 +813,23 @@ class DownloadManager(
                     item.error = None
             self._submit_locked(job, targets, rediscover=not job.items)
         return self.get_job(job_id)
+    def _align_retry_cookie_policy(self, job: DownloadJob) -> None:
+        """重试时跟随当前全局 Cookie 设置，避免旧任务永久卡在 Chrome Cookie。
+
+        任务创建时把当时的 use_chrome_cookies 固化在 job 上；用户后来关闭
+        Chrome 登录态并改用匿名/搜索 Profile 后，旧任务重试仍会读不到 Cookie
+        而反复失败。重试时以当前全局策略为准，关闭即清空任务级 Cookie 配置。
+        """
+        if job.cookie_browser and self.downloader_config.cookie_browser is None:
+            job.cookie_browser = None
+            job.cookie_profile = None
+            job.cookie_fallback_used = False
+
     def retry_item(self, job_id: str, item_id: str) -> DownloadJob:
         with self._lock:
             job = self._require_job(job_id)
             self._ensure_not_running(job_id)
+            self._align_retry_cookie_policy(job)
             if not job.retryable:
                 raise ItemNotRetryableError(job.error or "This task cannot be retried")
             if self._prepare_douyin_item_rediscovery_locked(job):
@@ -833,6 +865,7 @@ class DownloadManager(
         with self._lock:
             job = self._require_job(job_id)
             self._ensure_not_running(job_id)
+            self._align_retry_cookie_policy(job)
             if not job.retryable:
                 raise ItemNotRetryableError(job.error or "This task cannot be retried")
             if self._prepare_douyin_item_rediscovery_locked(job):
@@ -1006,10 +1039,22 @@ class DownloadManager(
             if rediscover:
                 self._attach_discovery_callback(engine, job_id, cancel_event)
                 job_snapshot = self.get_job(job_id)
-                result = engine.discover(
-                    job_snapshot.source_url,
-                    job_snapshot.platform,
-                    job_snapshot.source_kind,
+                target = UrlInfo(
+                    url=job_snapshot.source_url,
+                    platform=job_snapshot.platform,
+                    kind=job_snapshot.source_kind,
+                )
+                provider = provider_for(job_snapshot.platform, engine=engine)
+                auth = provider.prepare_session(
+                    SessionContext(
+                        use_chrome_cookies=bool(job_snapshot.cookie_browser),
+                        cookie_browser=job_snapshot.cookie_browser,
+                        cookie_profile=job_snapshot.cookie_profile,
+                    )
+                )
+                result = provider.discover(
+                    target,
+                    auth,
                     should_cancel=cancel_event.is_set,
                 )
                 self._validate_discovery_result(job_snapshot, result)
@@ -1552,6 +1597,31 @@ class DownloadManager(
             cookie_profile=job.cookie_profile,
         )
         return MediaDownloader(config)
+    def _await_stopped_future(self, job_id: str) -> None:
+        """等待已暂停/已结束任务的 worker 收尾，避免 resume 误报「仍在运行」。
+
+        worker 在锁内把任务标记为 PAUSED 后还要 _notify 才返回，future.done()
+        会稍晚于状态可见；用户 pause 后立刻 resume 时，_ensure_not_running 会
+        因 future 尚未 done 而抛 JobBusyError（CI 的 Windows/Python 3.14 上偶发）。
+        这里在锁外等待，避免与 worker 收尾所需的 _lock 死锁；真正还在运行的任务
+        不等待，仍由 _ensure_not_running 立即报忙。
+        """
+        future = self._futures.get(job_id)
+        if future is None or future.done():
+            return
+        job = self._jobs.get(job_id)
+        if job is None or job.status not in {
+            JobStatus.PAUSED,
+            JobStatus.COMPLETED,
+            JobStatus.FAILED,
+            JobStatus.CANCELLED,
+        }:
+            return
+        try:
+            future.result(timeout=3.0)
+        except Exception:
+            pass
+
     def _ensure_not_running(self, job_id: str) -> None:
         future = self._futures.get(job_id)
         if future is not None and not future.done():

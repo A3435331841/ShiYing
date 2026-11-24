@@ -262,6 +262,10 @@ MAX_MEDIA_ID_BYTES = 64
 
 
 MAX_FILENAME_COMPONENT_BYTES = 255
+# Windows 未启用长路径支持时强制 MAX_PATH=260。为临时工作目录、冲突后缀、
+# 扩展名与分隔符预留余量，按 UTF-8 字节估算（对中文比字符数更保守）。
+WINDOWS_MAX_PATH = 260
+PATH_BUDGET_MARGIN_BYTES = 24
 
 
 RESERVED_EXTENSION_BYTES = 16
@@ -782,16 +786,25 @@ def _normalized_douyin_duration_ms(value: Any) -> int | None:
     return None
 
 
-def _filename_title_limit(requested_limit: int, media_id: str) -> int:
+def _filename_title_limit(
+    requested_limit: int, media_id: str, parent_path_length: int = 0
+) -> int:
     date_prefix_bytes = len("Unknown-Date-".encode("ascii"))
     separators_bytes = len(" [].".encode("ascii"))
-    available = (
-        MAX_FILENAME_COMPONENT_BYTES
-        - date_prefix_bytes
-        - separators_bytes
-        - RESERVED_EXTENSION_BYTES
-        - len(media_id.encode("utf-8"))
+    fixed_bytes = (
+        date_prefix_bytes
+        + separators_bytes
+        + RESERVED_EXTENSION_BYTES
+        + len(media_id.encode("utf-8"))
     )
+    available = MAX_FILENAME_COMPONENT_BYTES - fixed_bytes
+    if parent_path_length > 0:
+        # 完整路径 = 父目录 + 分隔符 + 文件名。深层目录（平台/作者/标题）
+        # 下必须按剩余预算缩短标题，否则 Windows 上会因 MAX_PATH 直接失败。
+        path_available = (
+            WINDOWS_MAX_PATH - parent_path_length - 1 - PATH_BUDGET_MARGIN_BYTES - fixed_bytes
+        )
+        available = min(available, max(1, path_available))
     return max(1, min(int(requested_limit), MAX_TITLE_BYTES, available))
 
 
@@ -802,16 +815,20 @@ class _SafeFilenamePostProcessor(PostProcessor):
         *,
         title_byte_limit: int,
         fallback_media_id: str,
+        parent_path_length: int = 0,
     ) -> None:
         super().__init__(downloader)
         self.title_byte_limit = title_byte_limit
         self.fallback_media_id = fallback_media_id
+        self.parent_path_length = parent_path_length
 
     def run(self, information: dict[str, Any]) -> tuple[list[str], dict[str, Any]]:
         media_id = _safe_media_id(
             information.get("id"), fallback=self.fallback_media_id
         )
-        title_limit = _filename_title_limit(self.title_byte_limit, media_id)
+        title_limit = _filename_title_limit(
+            self.title_byte_limit, media_id, self.parent_path_length
+        )
         raw_title = information.get("title") or media_id
         information["_filename_title"] = safe_component(
             str(raw_title), fallback="Untitled", limit=title_limit
@@ -859,6 +876,9 @@ def _is_cookie_load_error(message: str) -> bool:
 class DownloaderConfig:
     cookie_browser: str | None = "chrome"
     cookie_profile: str | None = None
+    # AI 搜索用独立的持久化浏览器 Profile 保存登录态；下载时复用它，避免
+    # 「搜得到却下不下来」。仅在没有显式 Chrome Cookie 时作为补充来源。
+    search_profile_dir: str | None = None
     allow_cookie_fallback: bool = False
     socket_timeout_seconds: int = 30
     retries: int = 10
@@ -867,6 +887,8 @@ class DownloaderConfig:
     filename_limit: int = 180
     temporary_root: str | None = None
     anonymous_douyin: bool = False
+    hls_total_timeout_seconds: float = 6 * 60 * 60
+    hls_idle_timeout_seconds: float = 120
 
 
 @dataclass(slots=True)
@@ -934,6 +956,18 @@ class _DouyinNoProgressBudget:
 
     def refresh(self) -> None:
         self.deadline = time.monotonic() + self.idle_timeout_seconds
+
+    def extend(self, seconds: float) -> None:
+        """Push the deadline out by a locally-waited interval.
+
+        Used for time spent queuing on a shared local resource (e.g. the Douyin
+        media-probe lock), which is not "no media progress" and must not eat the
+        idle budget. Unlike refresh(), this preserves the budget shared across
+        candidates and retries.
+        """
+
+        if seconds > 0:
+            self.deadline += seconds
 
     def remaining(self) -> float:
         remaining = self.deadline - time.monotonic()

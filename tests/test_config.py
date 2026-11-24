@@ -154,12 +154,17 @@ def test_create_job_uses_one_config_snapshot(config_environment, monkeypatch, tm
     manager.create_job = create
 
     assert main.create_job(main.CreateJobRequest(url="https://youtu.be/test")) == {
-        "id": "created"
+        "id": "created",
+        "ignored_text_count": 0,
+        "unrecognized_samples": [],
+        "duplicates": [],
     }
     assert calls == [
         {
             "output_root": original.download_dir,
-            "cookie_browser": "chrome",
+            # YouTube 是公开平台，全局 Chrome Cookie 开关不应套用到它的任务，
+            # 否则读不到 Cookie 会直接让下载失败。
+            "cookie_browser": None,
             "cookie_profile": "Profile 1",
             "auto_start": True,
         }

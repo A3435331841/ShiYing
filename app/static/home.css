@@ -309,6 +309,19 @@ a.secondary svg { width: 15px; height: 15px; }
 .platform-chip:hover { background: var(--surface-2); border-color: var(--line-strong); color: var(--ink); }
 .platform-chip:focus-visible { border-color: var(--brand); }
 .platform-row small { margin-left: auto; font-size: 11.5px; color: var(--ink-3); }
+/* 三态能力派生角标：仅当 /api/platforms 返回能力数据时由 JS 写入 data-capability。 */
+.platform-chip[data-capability]::after {
+  content: attr(data-capability-label); margin-left: 2px;
+  padding: 1px 6px; border: 1px solid currentColor; border-radius: 999px;
+  font-size: 10px; font-weight: 650; line-height: 1.5; white-space: nowrap;
+}
+.platform-chip.capability-supported::after { color: var(--ok); }
+.platform-chip.capability-experimental::after { color: var(--warn); }
+.platform-chip.capability-unavailable::after { color: var(--danger); }
+.capability-tag { margin-left: 5px; font-size: 10px; font-weight: 650; color: var(--ink-3); }
+.capability-tag.capability-supported { color: var(--ok); }
+.capability-tag.capability-experimental { color: var(--warn); }
+.capability-tag.capability-unavailable { color: var(--danger); }
 .platform-icon, .thumb-platform-icon {
   display: block; width: 22px; height: 22px; flex-shrink: 0;
   object-fit: contain; object-position: center;
@@ -483,7 +496,7 @@ a.secondary svg { width: 15px; height: 15px; }
 .task-menu {
   position: absolute; right: 0; top: calc(100% + 4px); z-index: 20;
   display: flex; flex-direction: column; gap: 2px;
-  min-width: 110px; padding: 4px;
+  width: max-content; min-width: 130px; max-width: calc(100vw - 24px); padding: 4px;
   background: var(--surface); border: 1px solid var(--line-strong);
   border-radius: 9px; box-shadow: var(--shadow);
 }
@@ -492,6 +505,7 @@ a.secondary svg { width: 15px; height: 15px; }
   display: flex; align-items: center; gap: 8px;
   justify-content: flex-start; padding: 6px 10px; font-size: 12px;
   color: var(--ink-2); border-radius: 6px; width: 100%;
+  white-space: nowrap;
   text-decoration: none; box-sizing: border-box;
 }
 .task-menu a svg { width: 14px; height: 14px; flex-shrink: 0; }
@@ -511,6 +525,10 @@ a.secondary svg { width: 15px; height: 15px; }
 .empty-state h3 { font-size: 15px; font-weight: 650; }
 .empty-state p { font-size: 12.5px; color: var(--ink-3); max-width: 320px; }
 .empty-state button { margin-top: 4px; }
+.library-more { display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 14px; }
+.library-more[hidden], #library-sentinel[hidden] { display: none; }
+.library-more span { font-size: 11.5px; color: var(--ink-3); }
+#library-sentinel { height: 1px; }
 .task-footer {
   display: flex; justify-content: space-between; gap: 12px;
   margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line);

@@ -87,19 +87,20 @@
       </div>
       <div id="link-insights" class="link-insights" role="status" hidden></div>
       <div id="link-invalid-list" class="link-invalid-list" role="note" hidden></div>
+      <div id="paste-stats" class="paste-stats" role="status" hidden></div>
       <div class="composer-bar">
         <div class="save-path"><svg><use href="#i-folder"/></svg><span>保存至</span><strong id="save-path" title="下载保存目录">读取中…</strong><button class="text-button" data-open-settings type="button">更改</button></div>
         <div class="composer-actions"><kbd>Ctrl ↵</kbd><button id="ai-search-button" class="secondary" type="button"><svg><use href="#i-search"/></svg><span>AI 搜索</span></button><button id="preview-button" class="secondary" type="button" disabled><span>预览选集</span></button><button id="submit-button" class="primary" type="submit" disabled><svg><use href="#i-download"/></svg><span>解析并下载</span></button></div>
       </div>
     </form>
     <div class="platform-row" aria-label="已接入平台，点击打开官网">
-      <a class="platform-chip" href="https://www.douyin.com/" target="_blank" rel="noopener noreferrer" title="在默认浏览器中打开抖音官网"><img class="platform-icon douyin" src="/static/platform-icons/douyin.png" alt="" width="22" height="22" aria-hidden="true">抖音</a>
-      <a class="platform-chip" href="https://jingxuan.douyin.com/" target="_blank" rel="noopener noreferrer" title="在默认浏览器中打开抖音精选官网（应用下载入口）"><img class="platform-icon selected-douyin" src="/static/platform-icons/selected-douyin.png" alt="" width="22" height="22" aria-hidden="true">抖音精选</a>
-      <a class="platform-chip" href="https://www.kuaishou.com/" target="_blank" rel="noopener noreferrer" title="在默认浏览器中打开快手官网"><img class="platform-icon kuaishou" src="/static/platform-icons/kuaishou.png" alt="" width="22" height="22" aria-hidden="true">快手</a>
-      <a class="platform-chip" href="https://channels.weixin.qq.com/" target="_blank" rel="noopener noreferrer" title="在默认浏览器中打开视频号官方入口（视频号助手）；观看作品请在微信内打开视频号"><img class="platform-icon wechat" src="/static/platform-icons/wechat.svg" alt="" width="22" height="22" aria-hidden="true">视频号</a>
-      <a class="platform-chip" href="https://www.xiaohongshu.com/explore" target="_blank" rel="noopener noreferrer" title="在默认浏览器中打开小红书官网"><img class="platform-icon xhs" src="/static/platform-icons/xiaohongshu.png" alt="" width="22" height="22" aria-hidden="true">小红书</a>
-      <a class="platform-chip" href="https://www.bilibili.com/" target="_blank" rel="noopener noreferrer" title="在默认浏览器中打开B站官网"><img class="platform-icon bili" src="/static/platform-icons/bilibili.jpg" alt="" width="22" height="22" aria-hidden="true">B站</a>
-      <a class="platform-chip" href="https://www.youtube.com/" target="_blank" rel="noopener noreferrer" title="在默认浏览器中打开YouTube官网"><img class="platform-icon youtube" src="/static/platform-icons/youtube.png" alt="" width="22" height="22" aria-hidden="true">YouTube</a>
+      <a class="platform-chip" data-platform="douyin" href="https://www.douyin.com/" target="_blank" rel="noopener noreferrer" title="在默认浏览器中打开抖音官网"><img class="platform-icon douyin" src="/static/platform-icons/douyin.png" alt="" width="22" height="22" aria-hidden="true">抖音</a>
+      <a class="platform-chip" data-platform="selected-douyin" href="https://jingxuan.douyin.com/" target="_blank" rel="noopener noreferrer" title="在默认浏览器中打开抖音精选官网（应用下载入口）"><img class="platform-icon selected-douyin" src="/static/platform-icons/selected-douyin.png" alt="" width="22" height="22" aria-hidden="true">抖音精选</a>
+      <a class="platform-chip" data-platform="kuaishou" href="https://www.kuaishou.com/" target="_blank" rel="noopener noreferrer" title="在默认浏览器中打开快手官网"><img class="platform-icon kuaishou" src="/static/platform-icons/kuaishou.png" alt="" width="22" height="22" aria-hidden="true">快手</a>
+      <a class="platform-chip" data-platform="wechat" href="https://channels.weixin.qq.com/" target="_blank" rel="noopener noreferrer" title="在默认浏览器中打开视频号官方入口（视频号助手）；观看作品请在微信内打开视频号"><img class="platform-icon wechat" src="/static/platform-icons/wechat.svg" alt="" width="22" height="22" aria-hidden="true">视频号</a>
+      <a class="platform-chip" data-platform="xiaohongshu" href="https://www.xiaohongshu.com/explore" target="_blank" rel="noopener noreferrer" title="在默认浏览器中打开小红书官网"><img class="platform-icon xhs" src="/static/platform-icons/xiaohongshu.png" alt="" width="22" height="22" aria-hidden="true">小红书</a>
+      <a class="platform-chip" data-platform="bilibili" href="https://www.bilibili.com/" target="_blank" rel="noopener noreferrer" title="在默认浏览器中打开B站官网"><img class="platform-icon bili" src="/static/platform-icons/bilibili.jpg" alt="" width="22" height="22" aria-hidden="true">B站</a>
+      <a class="platform-chip" data-platform="youtube" href="https://www.youtube.com/" target="_blank" rel="noopener noreferrer" title="在默认浏览器中打开YouTube官网"><img class="platform-icon youtube" src="/static/platform-icons/youtube.png" alt="" width="22" height="22" aria-hidden="true">YouTube</a>
       <small>支持视频与图文作品 · 点击图标打开官网</small>
     </div>
   </section>
@@ -134,6 +135,8 @@
     </div>
     <div class="loading-skeleton" aria-hidden="true"><div class="skeleton-row"></div><div class="skeleton-row"></div><div class="skeleton-row"></div></div>
     <div id="task-list" aria-live="polite" aria-relevant="additions"></div>
+    <div id="library-more" class="library-more" hidden><button id="load-more" class="secondary" type="button" hidden>加载更多</button><span id="library-more-status" role="status"></span></div>
+    <div id="library-sentinel" aria-hidden="true" hidden></div>
     <div id="empty-state" class="empty-state"><img id="empty-illustration" class="empty-illustration" src="/static/media/empty-first.webp" alt=""><div class="empty-icon"><svg><use href="#i-download"/></svg></div><h3>从一条喜欢的链接开始</h3><p>粘贴上方分享链接，下载任务会出现在这里。</p><button id="empty-action" class="text-button">添加第一个下载</button></div>
     <footer class="task-footer"><span id="task-summary">正在读取任务…</span><span id="task-footer-note">文件保存在本机</span></footer>
   </section>
@@ -214,6 +217,7 @@
       <label class="checkbox-row"><span><strong>跳过 AI，直接关键词</strong><small>不调用 AI 理解层，把描述原样作为搜索词</small></span><input id="search-no-ai" type="checkbox" role="switch"></label>
       <label class="field-label" for="search-limit">每平台条数</label>
       <select id="search-limit"><option value="5">5</option><option value="10" selected>10</option><option value="15">15</option><option value="20">20</option></select>
+      <small id="search-limit-hint" class="field-help">多平台合计最多返回 30 条</small>
     </div>
     <p id="search-plan-note" class="field-help" hidden></p>
     <p id="search-message" class="form-message" role="status"></p>

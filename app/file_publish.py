@@ -11,6 +11,7 @@
 """
 import contextlib
 import errno
+import hashlib
 import os
 import stat
 import threading
@@ -127,6 +128,19 @@ def are_files_identical(file1: Path, file2: Path) -> bool:
         return False
 
 
+def _sha256(path: Path) -> str | None:
+    try:
+        if path.is_symlink():
+            return None
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            while chunk := handle.read(1024 * 1024):
+                digest.update(chunk)
+        return digest.hexdigest()
+    except OSError:
+        return None
+
+
 def publish_or_reuse_identical(temporary: Path, destination: Path) -> Path:
     """将临时文件原子发布至目标路径；若目标目录下已存在完全相同内容的文件，则直接复用并删除临时文件。
 
@@ -154,6 +168,8 @@ def publish_or_reuse_identical(temporary: Path, destination: Path) -> Path:
     # Check the entire bounded allocation range before filling a gap: an
     # identical version may remain after an earlier numbered file was removed.
     first_free = None
+    temporary_size = temporary.stat().st_size
+    temporary_hash = _sha256(temporary) if temporary_size else None
     for number in range(1, 10002):
         candidate = candidate_for(number)
         try:
@@ -167,7 +183,13 @@ def publish_or_reuse_identical(temporary: Path, destination: Path) -> Path:
                     first_free = number
                 continue
             raise
-        if stat.S_ISREG(mode) and are_files_identical(temporary, candidate):
+        if (
+            temporary_hash is not None
+            and stat.S_ISREG(mode)
+            and candidate.stat().st_size == temporary_size
+            and _sha256(candidate) == temporary_hash
+            and are_files_identical(temporary, candidate)
+        ):
             temporary.unlink(missing_ok=True)
             return candidate
 
@@ -179,7 +201,13 @@ def publish_or_reuse_identical(temporary: Path, destination: Path) -> Path:
             publish_no_replace(temporary, candidate)
             return candidate
         except FileExistsError:
-            if candidate.is_file() and are_files_identical(temporary, candidate):
+            if (
+                candidate.is_file()
+                and candidate.stat().st_size == temporary_size
+                and temporary_hash is not None
+                and _sha256(candidate) == temporary_hash
+                and are_files_identical(temporary, candidate)
+            ):
                 temporary.unlink(missing_ok=True)
                 return candidate
     raise FileExistsError("Could not find an unused output filename")

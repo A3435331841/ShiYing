@@ -130,6 +130,48 @@ def test_pause_keeps_the_in_flight_item_resumable(monkeypatch, manager):
     assert finished.completed_items == 2
 
 
+def test_resume_tolerates_worker_finishing_after_paused_state(monkeypatch, manager, tmp_path):
+    """PAUSED 状态已可见但旧 worker future 未 done 时，resume 不应误报 JobBusyError。"""
+    engine = PausableEngine()
+    engine.block_first = False
+    monkeypatch.setattr(manager, "_engine_for_job", lambda job: engine)
+    job = DownloadJob(
+        id="pause-race",
+        source_url="https://www.bilibili.com/video/BV1xx411c7mD",
+        platform=Platform.BILIBILI,
+        source_kind=SourceKind.ITEM,
+        output_root=str(tmp_path / "downloads"),
+        status=JobStatus.PAUSED,
+        items=[
+            DownloadItem(
+                id="part-a",
+                media_id="media-a",
+                source_url="https://www.bilibili.com/video/BV1xx411c7mD",
+                title="Part A",
+                media_type=MediaType.VIDEO,
+                status=ItemStatus.PAUSED,
+            )
+        ],
+    )
+    manager._jobs[job.id] = job
+    manager.store.save(job)
+
+    gate = threading.Event()
+    pending = manager._executor.submit(lambda: gate.wait(5))
+    manager._futures[job.id] = pending
+    timer = threading.Timer(0.05, gate.set)
+    timer.start()
+    try:
+        manager.resume_job(job.id)
+    finally:
+        gate.set()
+        timer.cancel()
+
+    assert pending.done(), "resume 应等待旧 worker 收尾完成"
+    finished = wait_for(manager, job.id, {JobStatus.COMPLETED, JobStatus.PARTIAL})
+    assert finished.status == JobStatus.COMPLETED
+
+
 def test_resume_retries_items_cancelled_by_an_older_pause(monkeypatch, manager, tmp_path):
     engine = PausableEngine()
     engine.block_first = False

@@ -14,6 +14,8 @@ RELEASES_DIR = ROOT / "releases"
 EXCLUDE_DIRS = {
     ".venv",
     ".git",
+    "build",
+    "worktrees",
     "__pycache__",
     ".pytest_cache",
     ".claude",
@@ -23,7 +25,7 @@ EXCLUDE_DIRS = {
     "backups",
     "graphify-out",
     # 运行态数据与审计快照：可能包含下载中的媒体、截图与工具痕迹，
-    # 与 AGENTS.md「个人数据与运行态隔离」红线一致，绝不进源码发行包。
+    # 绝不进源码发行包。
     "cache",
     "artifacts",
     "审计产物",
@@ -68,14 +70,26 @@ def package_release(version: str | None = None) -> Path:
 
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
         for root, dirs, files in os.walk(ROOT):
-            # Prune excluded directories
-            dirs[:] = [d for d in dirs if d not in EXCLUDE_DIRS and not d.startswith(".")]
-
             rel_root = Path(root).relative_to(ROOT)
-            if any(part in EXCLUDE_DIRS for part in rel_root.parts):
+            if rel_root == Path("data"):
+                dirs[:] = []
+            else:
+                # data/ 仅放行能力登记文件，其余运行态数据仍保持排除。
+                dirs[:] = [
+                    d
+                    for d in dirs
+                    if (d == "data" and rel_root == Path("."))
+                    or (d not in EXCLUDE_DIRS and not d.startswith("."))
+                ]
+
+            if rel_root != Path("data") and any(
+                part in EXCLUDE_DIRS for part in rel_root.parts
+            ):
                 continue
 
             for file in files:
+                if rel_root == Path("data") and file != "capabilities.json":
+                    continue
                 file_path = Path(root) / file
                 if file_path.suffix in EXCLUDE_SUFFIXES or file.startswith("."):
                     continue

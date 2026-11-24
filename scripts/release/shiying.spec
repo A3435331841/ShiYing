@@ -22,6 +22,8 @@ from PyInstaller.utils.hooks import collect_data_files, copy_metadata
 # SPECPATH = spec 文件所在目录（scripts/release）；仓库根是它的上一级。
 REPO_ROOT = Path(SPECPATH).resolve().parents[1]
 
+LITE = os.environ.get("SHIYING_LITE_BUILD") == "1"
+
 datas = [
     # 构建期源码指纹（build_exe.py 生成）：冻结模式下 /api/health 的 build_id。
     (str(REPO_ROOT / "build" / "pyinstaller" / "build_id.txt"), "."),
@@ -29,11 +31,13 @@ datas = [
     (str(REPO_ROOT / "app" / "static"), "app/static"),
     # 平台能力登记：冻结运行时从 exe 目录的 data/ 加载，缺失会锁死任务创建。
     (str(REPO_ROOT / "data" / "capabilities.json"), "data"),
-    # 包内工具目录：运行时钩子会把 <bundle>/bin 前置到 PATH。
-    (str(REPO_ROOT / "build" / "pyinstaller" / "bin" / "deno.exe"), "bin"),
-    (str(REPO_ROOT / "build" / "pyinstaller" / "bin" / "ffmpeg.exe"), "bin"),
-    (str(REPO_ROOT / "build" / "pyinstaller" / "bin" / "ffprobe.exe"), "bin"),
 ]
+
+# 轻量版不携带 ffmpeg/ffprobe/deno：用户系统需自行安装 FFmpeg，Deno 可选。
+# 运行时钩子仍会把 <bundle>/bin 前置到 PATH，因此系统 PATH 中的工具可被找到。
+if not LITE:
+    for name in ("deno.exe", "ffmpeg.exe", "ffprobe.exe"):
+        datas.append((str(REPO_ROOT / "build" / "pyinstaller" / "bin" / name), "bin"))
 
 # playwright 的 node driver（node.exe + package/）必须原样随包分发。
 datas += collect_data_files("playwright")

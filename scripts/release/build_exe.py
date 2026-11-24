@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
 import os
@@ -213,9 +214,17 @@ def prepare_ffmpeg(
         log(f"已锁定 FFmpeg ZIP 与二进制 SHA256 → {FFMPEG_LOCK.name}")
 
 
-def prepare_bin() -> None:
+def prepare_bin(*, lite: bool = False) -> None:
     bin_dir = BUILD_DIR / "bin"
     bin_dir.mkdir(parents=True, exist_ok=True)
+    if lite:
+        # 轻量版不内置外部运行时；清掉上次完整构建留下的二进制，
+        # 避免 PyInstaller 的缓存把它们又带进包里。
+        for name in ("deno.exe", *FFMPEG_BINARY_NAMES):
+            with contextlib.suppress(OSError):
+                (bin_dir / name).unlink()
+        log("轻量版：bin/ 中的 deno/ffmpeg/ffprobe 已移除")
+        return
     deno_src = Path(sys.executable).resolve().parent / "deno.exe"
     if not deno_src.is_file():
         raise SystemExit(f"venv 中找不到 deno.exe：{deno_src}")
@@ -243,15 +252,22 @@ def run_pyinstaller() -> None:
     )
 
 
-def write_package_readme(bundle: Path) -> None:
+def write_package_readme(bundle: Path, *, lite: bool = False) -> None:
+    dependency_line = (
+        "依赖（轻量版）：不内置 FFmpeg/FFprobe 与 Deno，请自行安装 FFmpeg 并加入 PATH"
+        "（音视频合并与画质探测必需）；Deno 可选，仅 YouTube 高清签名需要。"
+        if lite
+        else "依赖：内置 FFmpeg/FFprobe 与 Deno。需要系统已安装 Google Chrome（用于辅助会话）与 WebView2 运行时"
+        "（Windows 10/11 通常自带）。B 站/YouTube 等平台的画质与可用性受登录态影响。"
+    )
     (bundle / README_NAME).write_text(
-        """拾影 · 本地影像档案（便携版）
+        f"""拾影 · 本地影像档案（{'轻量便携版' if lite else '便携版'}）
 
 启动：双击「拾影.exe」。数据（任务记录、下载、缓存）保存在本文件夹内，移动整个文件夹即完成搬家。
 退出：设置 → 完全退出拾影；或双击「停止拾影.exe」。直接关窗口不会停止后台下载。
 
-依赖：内置 FFmpeg/FFprobe 与 Deno。需要系统已安装 Google Chrome（用于辅助会话）与 WebView2 运行时
-（Windows 10/11 通常自带）。B 站/YouTube 等平台的画质与可用性受登录态影响。
+{dependency_line}
+需要系统已安装 Google Chrome（用于辅助会话）与 WebView2 运行时（Windows 10/11 通常自带）。
 
 默认地址 http://127.0.0.1:8766 ，仅监听本机。下载内容与任务数据保存在本机；可选 AI 搜索开启时，会把查询文字或图片发送到你配置的兼容 AI 服务。
 首次启动如提示端口被占用，请先运行「停止拾影.exe」。
@@ -260,14 +276,15 @@ def write_package_readme(bundle: Path) -> None:
     )
 
 
-def make_zip() -> Path:
+def make_zip(*, lite: bool = False) -> Path:
     bundle = DIST_DIR / "拾影"
     if not (bundle / "拾影.exe").is_file():
         raise SystemExit(f"PyInstaller 产物缺失：{bundle}")
-    write_package_readme(bundle)
+    write_package_readme(bundle, lite=lite)
     RELEASES.mkdir(exist_ok=True)
     date = datetime.now(timezone.utc).strftime("%Y%m%d")
-    zip_path = RELEASES / f"拾影_v{APP_VERSION}_win64_portable_{date}.zip"
+    suffix = "lite" if lite else "portable"
+    zip_path = RELEASES / f"拾影_v{APP_VERSION}_win64_{suffix}_{date}.zip"
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
         for path in sorted(bundle.rglob("*")):
             if path.is_file():
@@ -345,22 +362,26 @@ def main() -> int:
     parser.add_argument("--no-pyinstaller-install", action="store_true", help="不自动安装 PyInstaller")
     parser.add_argument("--installer", action="store_true", help="便携包之外再用 Inno Setup 产出安装程序")
     parser.add_argument("--iscc", type=str, default=None, help="ISCC.exe 路径（默认自动探测）")
+    parser.add_argument("--lite", action="store_true", help="轻量版：不内置 ffmpeg/ffprobe/deno，需系统自行安装 FFmpeg")
     args = parser.parse_args()
     if sys.platform != "win32":
         raise SystemExit("便携包构建仅支持在 Windows 上执行。")
     if not args.no_pyinstaller_install:
         ensure_pyinstaller()
     write_build_id()
-    prepare_ffmpeg(
-        args.ffmpeg_zip,
-        args.skip_ffmpeg,
-        args.repin,
-        args.ffmpeg_sha256,
-    )
-    prepare_bin()
+    if not args.lite:
+        prepare_ffmpeg(
+            args.ffmpeg_zip,
+            args.skip_ffmpeg,
+            args.repin,
+            args.ffmpeg_sha256,
+        )
+    prepare_bin(lite=args.lite)
+    if args.lite:
+        os.environ["SHIYING_LITE_BUILD"] = "1"
     run_pyinstaller()
-    make_zip()
-    if args.installer:
+    make_zip(lite=args.lite)
+    if args.installer and not args.lite:
         build_installer(args.iscc)
     update_checksums()
     log("完成。")

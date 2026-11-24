@@ -27,6 +27,8 @@ datas = [
     (str(REPO_ROOT / "build" / "pyinstaller" / "build_id.txt"), "."),
     # 前端静态资源：main.py 以 _internal/app/static 解析（见模块注释）。
     (str(REPO_ROOT / "app" / "static"), "app/static"),
+    # 平台能力登记：冻结运行时从 exe 目录的 data/ 加载，缺失会锁死任务创建。
+    (str(REPO_ROOT / "data" / "capabilities.json"), "data"),
     # 包内工具目录：运行时钩子会把 <bundle>/bin 前置到 PATH。
     (str(REPO_ROOT / "build" / "pyinstaller" / "bin" / "deno.exe"), "bin"),
     (str(REPO_ROOT / "build" / "pyinstaller" / "bin" / "ffmpeg.exe"), "bin"),

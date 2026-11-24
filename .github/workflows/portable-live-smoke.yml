@@ -1,15 +1,9 @@
 name: Portable Douyin live smoke
 
+# Live smoke 依赖真实平台登录态与生产 Chrome、耗时较长，仅手动触发。
+# 原先绑定已不存在的临时工作分支的 push 触发是死配置，已移除。
 on:
   workflow_dispatch:
-  push:
-    branches:
-      - codex/portable-live-smoke
-    paths:
-      - app/**
-      - scripts/douyin_portable_live_smoke.py
-      - requirements.txt
-      - .github/workflows/portable-live-smoke.yml
 
 permissions:
   contents: read
@@ -28,7 +22,7 @@ jobs:
       max-parallel: 1
       matrix:
         os:
-          - macos-14
+          # macOS runner 在本账号不可用，与 tests.yml 的矩阵口径保持一致。
           - ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
@@ -78,7 +72,7 @@ jobs:
       - name: Run no-cookie production download smoke
         shell: bash
         run: |
-          python scripts/douyin_portable_live_smoke.py \
+          python scripts/dev/douyin_portable_live_smoke.py \
             --report "$RUNNER_TEMP/douyin-portable-live-report.json"
       - name: Upload sanitized smoke report
         if: always()

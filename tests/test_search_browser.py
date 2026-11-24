@@ -28,7 +28,9 @@ from app.search.backends.browser import (
 
 
 def test_search_urls():
-    assert search_url(Platform.DOUYIN, "猫 猫").endswith("/search/%E7%8C%AB%20%E7%8C%AB")
+    assert search_url(Platform.DOUYIN, "猫 猫").endswith(
+        "/search/%E7%8C%AB%20%E7%8C%AB?type=general"
+    )
     assert "searchKey=%E7%8C%AB" in search_url(Platform.KUAISHOU, "猫")
     assert "keyword=%E7%8C%AB" in search_url(Platform.XIAOHONGSHU, "猫")
 

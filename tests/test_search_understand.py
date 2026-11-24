@@ -181,6 +181,13 @@ def test_rerank_hits_parses_order_and_appends_unmentioned():
     assert order == [2, 0, 1, 3, 4]
 
 
+def test_rerank_hits_rejects_unshown_candidates_and_keeps_tail():
+    session = FakeSession([FakeResponse(payload=_chat_payload('{"order": [25, 2]}'))])
+    hits = [{"platform": "bilibili", "title": str(i)} for i in range(30)]
+    order = rerank_hits(_client(session), query="猫", hits=hits)
+    assert order == [2, *[index for index in range(30) if index != 2]]
+
+
 def test_rerank_hits_failure_returns_none():
     session = FakeSession([FakeResponse(payload=_chat_payload("not json"))])
     assert rerank_hits(_client(session), query="猫", hits=[{"title": str(i)} for i in range(6)]) is None

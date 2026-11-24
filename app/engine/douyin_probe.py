@@ -540,24 +540,19 @@ class DouyinProbeMixin:
                 )
         for attempt in range(1, DOUYIN_PROBE_ATTEMPTS + 1):
             try:
-                lock_timeout = DOUYIN_PROCESS_POLL_SECONDS
-                if isinstance(quality_run, _DouyinQualityProbeRun):
-                    lock_timeout = min(
-                        lock_timeout,
-                        quality_run.budget.remaining(),
-                    )
+                # 等待全局画质锁是「本地排队」，不是站点无响应：绝不能消耗
+                # 「无媒体进展」预算。等待期间只用固定的短轮询超时并检查取消，
+                # 预算在真正拿到锁、开始探测后才刷新/计时，否则排在后面的任务
+                # 会在还没探测任何字节前就被误判为 120s 无进展而中断。
                 lock_wait_started_at = time.monotonic()
                 last_lock_status_at = (
                     lock_wait_started_at - DOUYIN_LOCK_STATUS_INTERVAL_SECONDS
                 )
-                while not DOUYIN_MEDIA_PROBE_LOCK.acquire(timeout=lock_timeout):
+                while not DOUYIN_MEDIA_PROBE_LOCK.acquire(
+                    timeout=DOUYIN_PROCESS_POLL_SECONDS
+                ):
                     if should_cancel():
                         raise DownloadCancelled("Task cancelled")
-                    if isinstance(quality_run, _DouyinQualityProbeRun):
-                        lock_timeout = min(
-                            DOUYIN_PROCESS_POLL_SECONDS,
-                            quality_run.budget.remaining(),
-                        )
                     now = time.monotonic()
                     if (
                         callback
@@ -574,6 +569,11 @@ class DouyinProbeMixin:
                             )
                         )
                         last_lock_status_at = now
+                # 把「排队等本地锁」的时间还回预算（顺延 deadline）：这是本地
+                # 排队而非站点无响应，不应计入无媒体进展。用 extend 而非 refresh，
+                # 以保留预算在多个候选/重试之间的共享语义。
+                if isinstance(quality_run, _DouyinQualityProbeRun):
+                    quality_run.budget.extend(time.monotonic() - lock_wait_started_at)
                 try:
                     self._douyin_probe_context.ratio = ratio
                     self._douyin_probe_context.callback = callback

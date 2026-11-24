@@ -1,3 +1,4 @@
+import pytest
 from fastapi.testclient import TestClient
 
 from app import main
@@ -41,6 +42,37 @@ def test_preview_endpoint_returns_structured_items(monkeypatch, app_manager):
     assert data["total_items"] == 2
     assert data["items"][0]["title"] == "Part 1"
     assert data["warning"] == "Some warning"
+
+
+@pytest.mark.parametrize(
+    ("url", "expected_cookie_browser"),
+    [
+        ("https://www.youtube.com/watch?v=dQw4w9WgXcQ", None),
+        ("https://www.bilibili.com/video/BV1xx411c7mD", "chrome"),
+    ],
+)
+def test_preview_cookie_policy_matches_task_creation(
+    app_manager, monkeypatch, url: str, expected_cookie_browser: str | None
+) -> None:
+    observed: dict[str, object] = {}
+
+    def fake_discover(self, *args, **kwargs):
+        observed["cookie_browser"] = self.config.cookie_browser
+        return DiscoveryResult(author="TestAuthor", items=[])
+
+    monkeypatch.setattr(
+        main.config,
+        "use_chrome_cookies",
+        True,
+    )
+    monkeypatch.setattr("app.main.MediaDownloader.discover", fake_discover)
+
+    response = TestClient(main.app, base_url="http://localhost").post(
+        "/api/preview", json={"url": url}
+    )
+
+    assert response.status_code == 200, response.text
+    assert observed["cookie_browser"] == expected_cookie_browser
 
 
 def test_start_job_with_selected_items(app_manager, monkeypatch):

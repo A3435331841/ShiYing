@@ -120,11 +120,6 @@ class SearchService:
     # -- 入口 -----------------------------------------------------------
     def search(self, request: SearchRequest) -> SearchResponse:
         config = self._config_provider()
-        if not config.enabled:
-            raise DiscoveryError(
-                "AI 搜索已在设置中关闭",
-                issue_code=SiteIssueCode.LOCAL_CONFIGURATION,
-            )
         if not request.query and not request.image:
             raise DiscoveryError(
                 "请输入要搜索的内容描述或图片",
@@ -197,9 +192,11 @@ class SearchService:
             keywords={value: [request.query] for value in platform_values} if request.query else {},
             source="raw",
         )
-        if not request.ai_mode:
+        if not config.enabled or not request.ai_mode:
             reason = (
-                "已关闭 AI 模式，使用原始关键词"
+                "AI 搜索已在设置中关闭，使用原始关键词"
+                if not config.enabled and request.query
+                else "已关闭 AI 模式，使用原始关键词"
                 if request.query
                 else "图片搜索需要开启 AI 模式"
             )
@@ -350,7 +347,9 @@ class SearchService:
                     results[platform] = PlatformResult(platform=platform)
 
         def run_agent_reach(platform: Platform) -> bool:
-            if not self._agent_reach.available() or platform not in CHANNEL_BY_PLATFORM:
+            # 按渠道就绪状态判断：可执行文件存在但某渠道未安装时直接进入内置
+            # 后端，避免对 not_added/needs_setup 渠道白白等待超时。
+            if not self._agent_reach.channel_ready(platform):
                 return False
             keywords = platform_keywords.get(platform) or []
             for keyword in keywords[:1]:

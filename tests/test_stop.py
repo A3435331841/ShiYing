@@ -7,6 +7,7 @@ import signal
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from urllib.error import HTTPError
 
@@ -107,6 +108,32 @@ def test_main_uses_the_new_default_port(
 
     assert stop.main(["--runtime-dir", str(tmp_path)]) == 0
     assert captured["port"] == stop.DEFAULT_SERVER_PORT == 8766
+
+
+def test_main_never_closes_windows_by_global_title(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(stop, "stop_backend", lambda **kwargs: "not_running")
+    monkeypatch.setattr(stop.sys, "platform", "win32")
+
+    def forbidden_enum(callback_type, callback):
+        return callback_type(callback)
+
+    def forbidden_call(*args, **kwargs):
+        pytest.fail("stop.py must not enumerate or close unrelated application windows")
+
+    fake_ctypes = SimpleNamespace(
+        c_bool=object(),
+        WINFUNCTYPE=lambda result_type, argument_type: forbidden_enum,
+        windll=SimpleNamespace(
+            user32=SimpleNamespace(EnumWindows=forbidden_call),
+        ),
+        wintypes=SimpleNamespace(HWND=object(), LPARAM=object()),
+    )
+    monkeypatch.setitem(sys.modules, "ctypes", fake_ctypes)
+
+    assert stop.main(["--runtime-dir", str(tmp_path)]) == 0
 
 
 def test_tokenized_runtime_record_stops_only_matching_instance(

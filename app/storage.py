@@ -18,6 +18,52 @@ from pathlib import Path
 from .models import DownloadJob
 
 
+_DOUYIN_TRANSIENT_MEDIA_FIELDS = frozenset(
+    {
+        "candidates",
+        "direct_url",
+        "media_url",
+        "play_url",
+        "redirect_source_url",
+        "source_candidates",
+        "url",
+        "urls",
+    }
+)
+
+
+def _without_transient_media_urls(value):
+    if isinstance(value, dict):
+        return {
+            key: _without_transient_media_urls(item)
+            for key, item in value.items()
+            if key not in _DOUYIN_TRANSIENT_MEDIA_FIELDS
+            and not (isinstance(item, str) and item.startswith(("http://", "https://")))
+        }
+    if isinstance(value, list):
+        return [_without_transient_media_urls(item) for item in value]
+    if isinstance(value, str) and value.startswith(("http://", "https://")):
+        return None
+    return value
+
+
+def _persistence_payload(job: DownloadJob) -> dict:
+    payload = job.model_dump(mode="json")
+    for item in payload.get("items", []):
+        metadata = item.get("metadata")
+        if not isinstance(metadata, dict):
+            continue
+        for key in ("douyin_item_media", "douyin_profile_media"):
+            cached = metadata.get(key)
+            if isinstance(cached, dict):
+                sanitized = _without_transient_media_urls(cached)
+                sanitized["media_urls_persisted"] = False
+                metadata[key] = sanitized
+        metadata.pop("wechat_media_url", None)
+        metadata.pop("wechat_decode_key", None)
+    return payload
+
+
 def _fsync_directory(path: Path) -> None:
     """POSIX 上让目录项改动落盘；与 runtime.write_runtime_record 同一标准。
 
@@ -84,7 +130,7 @@ class JsonJobStore:
         return self.state_dir / f"{job_id}.json"
 
     def save(self, job: DownloadJob) -> None:
-        payload = job.model_dump(mode="json")
+        payload = _persistence_payload(job)
         target = self._job_path(job.id)
         temporary = self.state_dir / f".{job.id}.{uuid.uuid4().hex}.tmp"
         with self._lock:

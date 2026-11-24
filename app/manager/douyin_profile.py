@@ -39,6 +39,7 @@ from ..downloader import (
 from ..douyin import (
     discover_item_metadata_from_profile,
     is_complete_profile_media_metadata,
+    is_persisted_profile_media_metadata,
     quality_floor_dimensions,
 )
 from ..douyin_signing import new_signed_discovery_budget, public_signing_diagnostic_code
@@ -809,11 +810,12 @@ class DouyinProfileMixin:
             or item.metadata.get("profile_owner_verified") is not True
         ):
             return False
+        cached = item.metadata.get("douyin_profile_media")
         return is_complete_profile_media_metadata(
-            item.metadata.get("douyin_profile_media"),
+            cached,
             media_id,
             owner_id,
-        )
+        ) or is_persisted_profile_media_metadata(cached, media_id, owner_id)
     @classmethod
     def _refresh_douyin_profile_item_from_cache(
         cls,
@@ -1147,15 +1149,26 @@ class DouyinProfileMixin:
             if isinstance(cached, dict)
             else ""
         )
+        media_urls_omitted = (
+            isinstance(cached, dict)
+            and cached.get("media_urls_persisted") is False
+        )
         if common_identity_is_valid and cached_media_kind == "image":
             owner_id = str(cached.get("owner_id") or "").strip()
             valid = (
                 item.media_type == MediaType.IMAGE
                 and re.fullmatch(r"[A-Za-z0-9_-]{10,200}", owner_id) is not None
-                and is_complete_profile_media_metadata(
-                    cached,
-                    expected_id,
-                    owner_id,
+                and (
+                    is_complete_profile_media_metadata(
+                        cached,
+                        expected_id,
+                        owner_id,
+                    )
+                    or is_persisted_profile_media_metadata(
+                        cached,
+                        expected_id,
+                        owner_id,
+                    )
                 )
             )
         else:
@@ -1167,7 +1180,10 @@ class DouyinProfileMixin:
                     str(cached.get("video_uri") or "").strip(),
                 )
                 is not None
-                and bool(MediaDownloader._douyin_direct_candidates_from_cache(cached))
+                and (
+                    media_urls_omitted
+                    or bool(MediaDownloader._douyin_direct_candidates_from_cache(cached))
+                )
             )
         if valid:
             return False

@@ -11,11 +11,21 @@ from app.xiaohongshu import RemoteAsset
 
 
 class _Response:
-    def __init__(self, payload: bytes, content_type: str, declared_size: int | None):
+    def __init__(
+        self,
+        payload: bytes,
+        content_type: str,
+        declared_size: int | None,
+        *,
+        status_code: int = 200,
+        headers: dict[str, str] | None = None,
+    ):
         self.stream = BytesIO(payload)
         self.headers = {"Content-Type": content_type}
         if declared_size is not None:
             self.headers["Content-Length"] = str(declared_size)
+        self.headers.update(headers or {})
+        self.status_code = status_code
         self.reads: list[bytes] = []
         self.closed = False
 
@@ -72,6 +82,190 @@ def _base_path(engine, output_dir, extension):
     return engine._xhs_output_path(
         output_dir, "2025-11-14", "Title", "note-id", extension, 1
     )
+
+
+def test_direct_video_retry_resumes_with_matching_range_validator(tmp_path):
+    payload = b"\x00\x00\x00\x18ftypisom" + b"x" * 200
+    offset = 12
+    engine = MediaDownloader(DownloaderConfig(cookie_browser=None))
+
+    class ResumeYoutubeDL:
+        def __init__(self):
+            self.requests = []
+
+        def urlopen(self, request):
+            self.requests.append(request)
+            headers = {key.lower(): value for key, value in request.headers.items()}
+            if "range" not in headers:
+                return _Response(
+                    payload[:offset],
+                    "video/mp4",
+                    len(payload),
+                    headers={"ETag": '"media-v1"'},
+                )
+            assert headers["range"] == f"bytes={offset}-"
+            assert headers["if-range"] == '"media-v1"'
+            return _Response(
+                payload[offset:],
+                "video/mp4",
+                len(payload) - offset,
+                status_code=206,
+                headers={
+                    "Content-Range": f"bytes {offset}-{len(payload) - 1}/{len(payload)}",
+                    "ETag": '"media-v1"',
+                },
+            )
+
+    ydl = ResumeYoutubeDL()
+    path, _ = _download_xhs(engine, ydl, tmp_path, MediaType.VIDEO)
+
+    assert path.read_bytes() == payload
+    assert len(ydl.requests) == 2
+    assert not list(tmp_path.glob(".original-media-*"))
+
+
+def test_direct_video_retry_restarts_when_server_ignores_range(tmp_path):
+    payload = b"\x00\x00\x00\x18ftypisom" + b"x" * 200
+    offset = 12
+    engine = MediaDownloader(DownloaderConfig(cookie_browser=None))
+
+    class RestartYoutubeDL:
+        def __init__(self):
+            self.requests = []
+
+        def urlopen(self, request):
+            self.requests.append(request)
+            if len(self.requests) == 1:
+                return _Response(
+                    payload[:offset],
+                    "video/mp4",
+                    len(payload),
+                    headers={"ETag": '"media-v1"'},
+                )
+            return _Response(
+                payload,
+                "video/mp4",
+                len(payload),
+                headers={"ETag": '"media-v2"'},
+            )
+
+    ydl = RestartYoutubeDL()
+    path, _ = _download_xhs(engine, ydl, tmp_path, MediaType.VIDEO)
+
+    assert path.read_bytes() == payload
+    assert len(ydl.requests) == 2
+    assert "range" in {key.lower() for key in ydl.requests[1].headers}
+    assert not list(tmp_path.glob(".original-media-*"))
+
+
+def test_direct_video_changed_range_validator_restarts_cleanly(tmp_path):
+    payload = b"\x00\x00\x00\x18ftypisom" + b"x" * 200
+    offset = 12
+    engine = MediaDownloader(DownloaderConfig(cookie_browser=None))
+
+    class ChangedValidatorYoutubeDL:
+        def __init__(self):
+            self.requests = []
+
+        def urlopen(self, request):
+            self.requests.append(request)
+            headers = {key.lower(): value for key, value in request.headers.items()}
+            if len(self.requests) == 1:
+                return _Response(
+                    payload[:offset],
+                    "video/mp4",
+                    len(payload),
+                    headers={"ETag": '"media-v1"'},
+                )
+            if "range" in headers:
+                return _Response(
+                    payload[offset:],
+                    "video/mp4",
+                    len(payload) - offset,
+                    status_code=206,
+                    headers={
+                        "Content-Range": f"bytes {offset}-{len(payload) - 1}/{len(payload)}",
+                        "ETag": '"media-v2"',
+                    },
+                )
+            return _Response(
+                payload,
+                "video/mp4",
+                len(payload),
+                headers={"ETag": '"media-v2"'},
+            )
+
+    ydl = ChangedValidatorYoutubeDL()
+    path, _ = _download_xhs(engine, ydl, tmp_path, MediaType.VIDEO)
+
+    assert path.read_bytes() == payload
+    assert len(ydl.requests) == 3
+    assert "range" not in {key.lower() for key in ydl.requests[2].headers}
+    assert not list(tmp_path.glob(".original-media-*"))
+
+
+@pytest.mark.parametrize(
+    ("total_timeout", "idle_timeout", "message"),
+    [(0, 120, "总时长限制"), (3600, 0, "长时间无进展")],
+)
+def test_hls_timeout_kills_process_and_removes_partial(
+    tmp_path, monkeypatch, total_timeout, idle_timeout, message
+):
+    engine = MediaDownloader(
+        DownloaderConfig(
+            cookie_browser=None,
+            hls_total_timeout_seconds=total_timeout,
+            hls_idle_timeout_seconds=idle_timeout,
+        )
+    )
+    monkeypatch.setattr(engine, "_find_ffmpeg_executable", lambda: "ffmpeg")
+
+    class Process:
+        returncode = None
+
+        def __init__(self):
+            self.killed = False
+
+        def poll(self):
+            return -9 if self.killed else None
+
+        def kill(self):
+            self.killed = True
+            self.returncode = -9
+
+        def communicate(self):
+            return b"", b""
+
+    process = Process()
+    monkeypatch.setattr(transfer.subprocess, "Popen", lambda *args, **kwargs: process)
+    asset = RemoteAsset(candidates=["https://example.com/live.m3u8"], index=1)
+
+    with pytest.raises(MediaDownloadError, match=message):
+        engine._download_hls_asset(
+            candidate_url="https://example.com/live.m3u8",
+            request_headers={},
+            media_type=MediaType.VIDEO,
+            asset=asset,
+            output_dir=tmp_path,
+            upload_date=None,
+            title="Title",
+            media_id="media-id",
+            platform=Platform.KUAISHOU,
+            asset_index=None,
+            compact_names=False,
+            paired_stem=None,
+            pair_image=False,
+            is_kuaishou_source=True,
+            verify_declared_dimensions=False,
+            require_quality_fingerprint=False,
+            callback=None,
+            should_cancel=lambda: False,
+            progress_index=None,
+            progress_count=None,
+        )
+
+    assert process.killed
+    assert not list(tmp_path.glob(".original-media-*"))
 
 
 @pytest.mark.parametrize("size_source", ["content-length", "asset-size"])
@@ -550,3 +744,15 @@ def test_security_block_propagates_for_queue_pause(tmp_path):
         _download_xhs(engine, ydl, tmp_path, MediaType.IMAGE)
 
     assert ydl.calls == 1
+
+
+def test_hls_detection_accepts_m3u8_urls_and_content_types():
+    assert transfer._looks_like_hls("https://example.com/a.m3u8?token=1", "")
+    assert transfer._looks_like_hls(
+        "https://example.com/master", "application/vnd.apple.mpegurl"
+    )
+    assert transfer._looks_like_hls(
+        "https://example.com/master", "application/x-mpegURL"
+    )
+    assert not transfer._looks_like_hls("https://example.com/a.mp4", "video/mp4")
+    assert not transfer._looks_like_hls("https://example.com/a.m3u8.txt", "text/plain")

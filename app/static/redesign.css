@@ -110,7 +110,11 @@ body { background: var(--bg); }
 #composer.compact .archive-hero p { display: none; }
 #composer.compact .section-head { padding: 0 2px 8px; }
 #composer.compact .section-head > div { display: none; }
-#composer.compact .platform-row { display: none; }
+/* 平台官网入口是首页的常驻能力，不能被任务收起态吞掉；compact 只压缩尺寸 */
+#composer.compact .platform-row { padding: 6px 2px 2px; gap: 6px; }
+#composer.compact .platform-chip { padding: 3px 8px 3px 4px; font-size: 11.5px; }
+#composer.compact .platform-icon { width: 18px; height: 18px; }
+#composer.compact .platform-row small { display: none; }
 #composer.compact .input-card { padding-top: 11px; }
 #composer.compact textarea { min-height: 54px; max-height: 120px; }
 #composer.compact .composer-bar { margin-top: 9px; padding-top: 9px; }
@@ -151,6 +155,18 @@ body { background: var(--bg); }
   overflow-wrap: anywhere;
 }
 .link-invalid-list[hidden] { display: none !important; }
+/* 提交后展示后端 POST /api/jobs 返回的粘贴解析统计（ignored_text_count /
+   unrecognized_samples / duplicates），只在有内容时出现，不占据默认首屏。 */
+.paste-stats {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px;
+  margin: 8px 0 0; padding: 8px 11px; font-size: 11.5px; line-height: 1.6;
+  color: var(--ink-3); background: var(--surface-2);
+  border: 1px solid var(--line); border-radius: 8px;
+  overflow-wrap: anywhere; font-variant-numeric: tabular-nums;
+}
+.paste-stats[hidden] { display: none !important; }
+.paste-stats strong { font-family: var(--mono); font-weight: 650; color: var(--ink-2); }
+.paste-stats .paste-warn { color: var(--warn); }
 
 /* --------------------------------------------------------------------------
    5. 任务行 · 三层信息 + 平台色收敛 + 稳定动作区
@@ -238,11 +254,11 @@ body { background: var(--bg); }
 }
 #tasks-section[data-view="completed"] .task-row {
   display: flex; flex-direction: column; align-items: stretch; gap: 0;
-  padding: 0; overflow: hidden;
+  padding: 0;
 }
 #tasks-section[data-view="completed"] .content-cell { flex-direction: column; align-items: stretch; gap: 0; }
 #tasks-section[data-view="completed"] .task-thumb-wrap {
-  width: 100%; height: 132px; border: 0; border-radius: 0;
+  width: 100%; height: 132px; border: 0; border-radius: 13px 13px 0 0;
   border-bottom: 1px solid var(--archive-line);
 }
 #tasks-section[data-view="completed"] .task-thumb-img { object-fit: cover; }
@@ -377,7 +393,12 @@ dialog { border-radius: var(--archive-radius); border-color: var(--archive-line)
   }
   .mobile-tabs .nav-button svg { width: 19px; height: 19px; }
   .mobile-tabs .nav-button.selected { box-shadow: inset 0 2px 0 var(--brand); }
-  .mobile-tabs .nav-button .count { display: none; }
+  /* 窄屏侧栏隐藏后，底部 Tab 是唯一可见的未完成计数入口；home.js:render()
+     每帧同步的这个徽标必须显示，否则那段同步就是不可见的死代码。 */
+  .mobile-tabs .nav-button .count {
+    display: inline-block; align-self: center; margin: 1px 0 0;
+    min-width: 18px; padding: 0 5px; font-size: 9.5px; line-height: 15px;
+  }
   .toast-region { bottom: 74px; }
   /* 任务行单列，标题不再被挤成两字 */
   .task-row, .task-row.completed-row {
@@ -399,7 +420,12 @@ dialog { border-radius: var(--archive-radius); border-color: var(--archive-line)
 @media (max-width: 520px) {
   .composer-bar { flex-direction: column; align-items: stretch; gap: 9px; }
   .composer-actions { justify-content: stretch; }
-  .composer-actions .primary, .composer-actions .secondary { flex: 1; }
+  /* flex item 默认 min-width:auto 会让按钮内容撑开容器；允许收缩并收紧内边距/字号/图标，
+     使三个按钮在 360px 窄屏下保持单行完整显示而不溢出视口 */
+  .composer-actions .primary, .composer-actions .secondary {
+    flex: 1; min-width: 0; padding-left: 8px; padding-right: 8px; font-size: 12px;
+  }
+  .composer-actions svg { width: 14px; height: 14px; }
   .save-path strong { max-width: none; }
   .archive-hero h2 { font-size: 20px; }
   #tasks-section[data-view="completed"] #task-list { grid-template-columns: 1fr; }

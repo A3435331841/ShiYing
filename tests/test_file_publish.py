@@ -195,6 +195,26 @@ def test_publish_or_reuse_identical_finds_match_at_allocation_limit(tmp_path):
     assert not temporary.exists()
 
 
+def test_publish_hashes_temporary_once_across_same_size_candidates(tmp_path, monkeypatch):
+    destination = tmp_path / "video.mp4"
+    destination.write_bytes(b"different")
+    (tmp_path / "video (2).mp4").write_bytes(b"also other")
+    match = tmp_path / "video (3).mp4"
+    match.write_bytes(b"matching!")
+    temporary = tmp_path / ".download.part"
+    temporary.write_bytes(b"matching!")
+    calls = []
+    real_hash = file_publish._sha256
+
+    def counted_hash(path):
+        calls.append(path)
+        return real_hash(path)
+
+    monkeypatch.setattr(file_publish, "_sha256", counted_hash)
+    assert publish_or_reuse_identical(temporary, destination) == match
+    assert calls.count(temporary) == 1
+
+
 def test_publish_or_reuse_identical_preserves_large_file_with_different_middle(tmp_path):
     destination = tmp_path / "video.mp4"
     prefix = b"a" * (1024 * 1024)

@@ -389,6 +389,14 @@ def complete_douyin_profile_metadata(
     }
 
 
+def save_unsanitized_legacy_job(state_dir: Path, job: DownloadJob) -> None:
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / f"{job.id}.json").write_text(
+        job.model_dump_json(),
+        encoding="utf-8",
+    )
+
+
 def test_xiaohongshu_job_pins_a_valid_chrome_profile_at_creation(
     monkeypatch,
     tmp_path,
@@ -471,16 +479,17 @@ def test_xiaohongshu_job_rejects_explicit_profile_without_session(
         max_workers=1,
     )
     try:
-        with pytest.raises(TemporaryAccessError, match="Chrome login/profile") as error:
-            manager.create_job(
-                "https://www.xiaohongshu.com/user/profile/example",
-                cookie_browser="chrome",
-                cookie_profile="Profile 4",
-                auto_start=False,
-            )
-
-        assert getattr(error.value, "verification_url", None) is None
-        assert manager.list_jobs() == []
+        # 建任务时缺少登录态不再拒绝：用户可先建任务，稍后在 Chrome 登录。
+        # 真正执行时 _resolve 仍会拒绝并把任务置为 needs_auth。
+        job = manager.create_job(
+            "https://www.xiaohongshu.com/user/profile/example",
+            cookie_browser="chrome",
+            cookie_profile="Profile 4",
+            auto_start=False,
+        )
+        assert job.cookie_browser == "chrome"
+        assert job.cookie_profile == "Profile 4"
+        assert len(manager.list_jobs()) == 1
     finally:
         manager.shutdown()
 
@@ -499,18 +508,14 @@ def test_xiaohongshu_job_rejects_missing_chrome_session(
         max_workers=1,
     )
     try:
-        with pytest.raises(
-            TemporaryAccessError,
-            match="CAPTCHA verification is not required",
-        ) as error:
-            manager.create_job(
-                "https://www.xiaohongshu.com/user/profile/example",
-                cookie_browser="chrome",
-                auto_start=False,
-            )
-
-        assert getattr(error.value, "verification_url", None) is None
-        assert manager.list_jobs() == []
+        # 建任务时没有可用 Chrome 会话不再被拒；执行阶段的校验保持不变。
+        job = manager.create_job(
+            "https://www.xiaohongshu.com/user/profile/example",
+            cookie_browser="chrome",
+            auto_start=False,
+        )
+        assert job.cookie_browser == "chrome"
+        assert len(manager.list_jobs()) == 1
     finally:
         manager.shutdown()
 
@@ -4027,7 +4032,7 @@ def test_restore_migrates_legacy_douyin_profile_media_without_direct_candidates(
         ],
     )
     job.refresh_counts()
-    JsonJobStore(state_dir).save(job)
+    save_unsanitized_legacy_job(state_dir, job)
 
     manager = DownloadManager(
         state_dir=state_dir,
@@ -4443,7 +4448,7 @@ def test_restore_discards_legacy_douyin_item_cache_without_direct_candidates(
         ],
     )
     job.refresh_counts()
-    JsonJobStore(state_dir).save(job)
+    save_unsanitized_legacy_job(state_dir, job)
 
     class RefreshedItemEngine:
         def __init__(self) -> None:

@@ -785,27 +785,6 @@ def main(argv: list[str] | None = None) -> int:
     else:
         print(f"Original Media Downloader stopped on port {args.port}.")
 
-    if sys.platform == "win32":
-        with contextlib.suppress(Exception):
-            import ctypes
-            from ctypes import wintypes
-            user32 = ctypes.windll.user32
-            title = "拾影 · 视频下载工具"
-            def enum_proc(hwnd, lParam):
-                if user32.IsWindowVisible(hwnd):
-                    length = user32.GetWindowTextLengthW(hwnd)
-                    if length > 0:
-                        buf = ctypes.create_unicode_buffer(length + 1)
-                        user32.GetWindowTextW(hwnd, buf, length + 1)
-                        if buf.value == title:
-                            class_buf = ctypes.create_unicode_buffer(256)
-                            user32.GetClassNameW(hwnd, class_buf, 256)
-                            if "TabProxyWindow" not in class_buf.value:
-                                user32.PostMessageW(hwnd, 0x0010, 0, 0)
-                return True
-            WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, wintypes.HWND, wintypes.LPARAM)
-            user32.EnumWindows(WNDENUMPROC(enum_proc), 0)
-
     return 0
 
 

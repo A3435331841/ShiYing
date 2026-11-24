@@ -389,11 +389,11 @@ def rerank_hits(
     for value in order:
         if isinstance(value, bool) or not isinstance(value, int):
             continue
-        if 0 <= value < len(hits) and value not in seen:
+        if 0 <= value < len(compact) and value not in seen:
             seen.add(value)
             result.append(value)
     if not result:
         return None
-    # 未提及的候选追加在末尾，避免因模型漏项丢结果。
+    # 未提及的候选追加在末尾，避免因模型漏项或越界下标丢结果。
     result.extend(index for index in range(len(hits)) if index not in seen)
     return result

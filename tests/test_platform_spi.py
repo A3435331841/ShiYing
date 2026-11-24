@@ -18,7 +18,9 @@ from app.platforms import (
     ProviderRegistry,
     SessionContext,
     UnsupportedUrlError,
+    build_provider_registry,
     identify_url,
+    provider_for,
 )
 from app.platforms.base import ProcessedMedia
 from app.platforms.youtube import (
@@ -105,9 +107,77 @@ def test_discover_delegates_to_injected_engine():
     provider = YouTubeProvider(engine=engine)
     target = provider.identify("https://www.youtube.com/watch?v=abcdefghijk")
     auth = provider.prepare_session(SessionContext())
-    items = provider.discover(target, auth)
-    assert [item.id for item in items] == ["video-1"]
+    result = provider.discover(target, auth)
+    assert [item.id for item in result.items] == ["video-1"]
     assert engine.calls == [(target.url, Platform.YOUTUBE, target.kind)]
+
+
+def test_default_registry_covers_every_supported_platform():
+    registry = build_provider_registry(engine=_FakeEngine())
+    assert set(registry.platforms()) == set(Platform)
+    assert len(registry.platforms()) == len(Platform)
+    for platform in Platform:
+        provider = registry.get(platform)
+        assert provider.platform is platform
+        assert isinstance(provider, PlatformProvider)
+
+
+_PROVIDER_URLS = {
+    Platform.DOUYIN: "https://www.douyin.com/video/1234567890",
+    Platform.SELECTED_DOUYIN: "https://jingxuan.douyin.com/video/1234567890",
+    Platform.XIAOHONGSHU: "https://www.xiaohongshu.com/explore/6411cf99000000001300b6d9",
+    Platform.KUAISHOU: "https://www.kuaishou.com/short-video/3xvideo1",
+    Platform.BILIBILI: "https://www.bilibili.com/video/BV1xx411c7mD",
+    Platform.YOUTUBE: "https://www.youtube.com/watch?v=abcdefghijk",
+    Platform.WECHAT: "https://weixin.qq.com/sph/demo-work",
+}
+
+
+@pytest.mark.parametrize(("platform", "url"), _PROVIDER_URLS.items())
+def test_every_provider_identifies_its_platform_and_delegates_discovery(platform, url):
+    engine = _FakeEngine()
+    provider = provider_for(platform, engine=engine)
+    target = provider.identify(url)
+    assert target.platform is platform
+    auth = provider.prepare_session(SessionContext())
+    assert not hasattr(auth, "credentials")
+    result = provider.discover(target, auth)
+    assert [item.id for item in result.items] == ["video-1"]
+    assert engine.calls == [(target.url, platform, target.kind)]
+
+
+@pytest.mark.parametrize(("platform", "folder"), [
+    (Platform.DOUYIN, "抖音"),
+    (Platform.SELECTED_DOUYIN, "Selected-Douyin"),
+    (Platform.XIAOHONGSHU, "小红书"),
+    (Platform.KUAISHOU, "快手"),
+    (Platform.BILIBILI, "B站"),
+    (Platform.YOUTUBE, "YouTube"),
+    (Platform.WECHAT, "视频号"),
+])
+def test_every_provider_resolves_safe_platform_output(platform, folder, tmp_path: Path):
+    provider = provider_for(platform, engine=_FakeEngine())
+    item = DownloadItem(
+        id="item-1",
+        media_id="media-1",
+        source_url=_PROVIDER_URLS[platform],
+        title="../../Demo: Title",
+        author="../../Author\\\\Name",
+        upload_date="2026-11-24",
+    )
+    path = provider.resolve_output_path(item, tmp_path)
+    assert tmp_path in path.parents
+    assert path.parts[-3] == folder
+    assert ".." not in path.parts
+    assert path.name.endswith("[media-1].mp4")
+
+
+def test_wechat_provider_rejects_engine_bypassing_decryption():
+    provider = provider_for(Platform.WECHAT, engine=_FakeEngine())
+    with pytest.raises(RuntimeError, match="解密必须由下载引擎"):
+        provider.process_stream(
+            MediaStream(url="https://cdn.example/video", format_id="best"), b"encrypted"
+        )
 
 
 def test_probe_streams_uses_measured_resolution_and_sortable_structure():

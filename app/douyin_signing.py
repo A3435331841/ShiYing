@@ -13,7 +13,8 @@ import re
 import threading
 import time
 from html.parser import HTMLParser
-from http.cookiejar import CookieJar
+from http.cookiejar import Cookie, CookieJar
+from pathlib import Path
 from typing import Any, Callable
 from urllib.error import HTTPError as UrllibHTTPError
 from urllib.parse import parse_qs, unquote, urlsplit
@@ -650,7 +651,69 @@ def _build_signing_document(glue_tags: tuple[str, ...]) -> str:
     )
 
 
+def _load_profile_cookie_jar(profile_dir: Path) -> CookieJar:
+    """从 AI 搜索登录态的持久化 Profile 读取抖音 Cookie。
+
+    Chrome 127+ 的 App-Bound Encryption 让 yt-dlp 无法解密 Cookie，但
+    Playwright 用浏览器自身打开同一个 Profile 时可以正常拿到登录态。
+    """
+
+    from playwright.sync_api import sync_playwright
+
+    from .search.session import profile_lock
+
+    lock = profile_lock(profile_dir)
+    if not lock.acquire(timeout=120):
+        raise _CookieAccessSigningFailure("搜索 Profile 正被其他任务使用，请稍后重试")
+    try:
+        with sync_playwright() as playwright:
+            context = playwright.chromium.launch_persistent_context(
+                user_data_dir=str(profile_dir),
+                channel="chrome",
+                headless=False,
+                args=["--window-position=-32000,-32000", "--window-size=1280,900"],
+                locale="zh-CN",
+                viewport={"width": 1280, "height": 900},
+            )
+            try:
+                jar = CookieJar()
+                now = time.time()
+                for item in context.cookies("https://www.douyin.com"):
+                    domain = str(item.get("domain") or "douyin.com")
+                    jar.set_cookie(
+                        Cookie(
+                            version=0,
+                            name=str(item["name"]),
+                            value=str(item.get("value") or ""),
+                            port=None,
+                            port_specified=False,
+                            domain=domain,
+                            domain_specified=True,
+                            domain_initial_dot=domain.startswith("."),
+                            path=str(item.get("path") or "/"),
+                            path_specified=True,
+                            secure=bool(item.get("secure")),
+                            expires=float(item.get("expires") or (now + 86400)),
+                            discard=False,
+                            comment=None,
+                            comment_url=None,
+                            rest={},
+                            rfc2109=False,
+                        )
+                    )
+                return jar
+            finally:
+                with contextlib.suppress(Exception):
+                    context.close()
+    except Exception as exc:
+        raise _CookieAccessSigningFailure("搜索 Profile Cookie 读取失败") from exc
+    finally:
+        lock.release()
+
+
 def _load_chrome_cookie_jar(cookie_profile: str | None) -> CookieJar:
+    if cookie_profile and Path(cookie_profile).is_dir():
+        return _load_profile_cookie_jar(Path(cookie_profile))
     try:
         return extract_cookies_from_browser(
             "chrome", profile=cookie_profile, logger=_QuietCookieLogger()

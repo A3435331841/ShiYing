@@ -116,6 +116,9 @@ class FakeAgent:
     def available(self):
         return self._available
 
+    def channel_ready(self, platform):
+        return self._available
+
     def search(self, platform, keyword, limit=10):
         self.calls.append((platform, keyword))
         return self.hits.get(platform, [])[:limit]
@@ -350,11 +353,12 @@ def test_browser_issues_are_scoped_to_the_current_batch():
     assert second.results[0].issue.issue_code == SiteIssueCode.LOGIN_REQUIRED.value
 
 
-def test_disabled_search_raises():
+def test_disabled_search_falls_back_to_keywords():
     service = _service(config_provider=lambda: SearchConfig(enabled=False))
-    with pytest.raises(DiscoveryError) as info:
-        service.search(SearchRequest(query="猫", platforms=[Platform.BILIBILI]))
-    assert info.value.issue_code is SiteIssueCode.LOCAL_CONFIGURATION
+    response = service.search(SearchRequest(query="猫", platforms=[Platform.BILIBILI]))
+    assert response.plan.source == "raw"
+    assert response.plan.keywords[Platform.BILIBILI.value] == ["猫"]
+    assert "关闭" in response.plan.fallback_reason
 
 
 def test_valid_empty_platform_result_has_no_issue():

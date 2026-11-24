@@ -216,3 +216,26 @@ class ManagerEvent(BaseModel):
     item_id: str | None = None
     revision: int
     timestamp: datetime = Field(default_factory=utc_now)
+
+class LibraryItem(BaseModel):
+    id: str
+    title: str
+    platform: str
+    media_type: str
+    status: str
+    author: str | None = None
+    created_at: str
+    output_dir: str = ""
+    total_items: int = 0
+    completed_items: int = 0
+    failed_items: int = 0
+    total_bytes: int = 0
+    missing_files: int = 0
+    cover_url: str
+
+
+class LibraryPage(BaseModel):
+    items: list[LibraryItem]
+    next_cursor: str | None = None
+    total_estimate: int = 0
+    index_status: str = "ready"

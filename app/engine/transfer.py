@@ -23,6 +23,8 @@ import tempfile
 import threading
 import time
 import unicodedata
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from http.cookiejar import CookieJar
@@ -63,6 +65,13 @@ from ..errors import (
     is_explicit_rate_limit_message,
 )
 from ..models import DownloadItem, MediaType, Platform, SourceKind, TransferProgress
+from ..runtime import (
+    DEFAULT_RUNTIME_DIR,
+    ENV_RUNTIME_DIR,
+    ProjectLock,
+    ProjectLockHeldError,
+    RuntimeErrorBase,
+)
 from ..kuaishou import discover as discover_kuaishou
 from ..kuaishou import is_media_url as is_kuaishou_media_url
 from ..kuaishou import source_identity as kuaishou_source_identity
@@ -94,6 +103,169 @@ class _PairedAssetConflictError(MediaDownloadError):
     """The exact paired destination exists but cannot be safely reused."""
 
 
+_DIRECT_TRANSFER_SCOPE: ContextVar[str] = ContextVar(
+    "direct_transfer_scope", default=""
+)
+
+
+@contextmanager
+def direct_transfer_scope(scope: str):
+    token = _DIRECT_TRANSFER_SCOPE.set(scope)
+    try:
+        yield
+    finally:
+        _DIRECT_TRANSFER_SCOPE.reset(token)
+
+
+def _direct_transfer_paths(
+    output_dir: Path,
+    *,
+    source_url: str,
+    media_id: str,
+    platform: Platform,
+    media_type: MediaType,
+    asset_index: int | None,
+    paired_stem: str | None,
+) -> tuple[Path, Path]:
+    identity = json.dumps(
+        [
+            str(output_dir.resolve()),
+            _DIRECT_TRANSFER_SCOPE.get(),
+            source_url,
+            media_id,
+            platform.value,
+            media_type.value,
+            asset_index,
+            paired_stem,
+        ],
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    digest = hashlib.sha256(identity).hexdigest()
+    temporary = output_dir / f".original-media-{digest}.part"
+    return temporary, temporary.with_suffix(".part.json")
+
+
+def _direct_transfer_lock_path(temporary: Path) -> Path:
+    runtime_dir = Path(
+        os.environ.get(ENV_RUNTIME_DIR) or DEFAULT_RUNTIME_DIR
+    ).expanduser().resolve()
+    identity = hashlib.sha256(
+        str(temporary.resolve()).casefold().encode("utf-8")
+    ).hexdigest()
+    return runtime_dir / "transfer-locks" / f"{identity}.lock"
+
+
+def _load_direct_transfer_state(temporary: Path, state_path: Path) -> tuple[int, dict[str, str]]:
+    try:
+        if not stat.S_ISREG(temporary.lstat().st_mode) or not stat.S_ISREG(
+            state_path.lstat().st_mode
+        ):
+            return 0, {}
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        fd = os.open(state_path, flags)
+        with os.fdopen(fd, "r", encoding="utf-8") as handle:
+            state = json.load(handle)
+        offset = state.get("offset")
+        total = state.get("total")
+        etag = state.get("etag")
+        modified = state.get("last_modified")
+        if type(offset) is not int or offset <= 0 or temporary.stat().st_size != offset:
+            return 0, {}
+        if type(total) is not int or total <= offset:
+            return 0, {}
+        if isinstance(etag, str) and etag and not etag.startswith("W/"):
+            return offset, {"etag": etag, "total": total}
+        if isinstance(modified, str) and modified:
+            return offset, {"last_modified": modified, "total": total}
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
+        pass
+    return 0, {}
+
+
+def _save_direct_transfer_state(
+    state_path: Path,
+    *,
+    offset: int,
+    total: int | None,
+    etag: str,
+    last_modified: str,
+    media_handle: Any = None,
+) -> None:
+    if offset <= 0 or total is None or total <= offset:
+        return
+    validator = (
+        {"etag": etag, "total": total}
+        if etag and not etag.startswith("W/")
+        else {"last_modified": last_modified, "total": total}
+        if last_modified
+        else None
+    )
+    if validator is None:
+        return
+    if media_handle is not None:
+        media_handle.flush()
+        os.fsync(media_handle.fileno())
+    else:
+        temporary = state_path.with_suffix("")
+        flags = os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
+        media_fd = os.open(temporary, flags)
+        try:
+            media_info = os.fstat(media_fd)
+            path_info = temporary.lstat()
+            if (
+                not stat.S_ISREG(media_info.st_mode)
+                or not stat.S_ISREG(path_info.st_mode)
+                or (media_info.st_dev, media_info.st_ino)
+                != (path_info.st_dev, path_info.st_ino)
+            ):
+                raise MediaDownloadError(
+                    "Direct transfer temporary path is not a regular file"
+                )
+            os.fsync(media_fd)
+        finally:
+            os.close(media_fd)
+    payload = {"version": 1, "offset": offset, **validator}
+    fd, name = tempfile.mkstemp(prefix=state_path.name + ".", dir=state_path.parent)
+    replacement = Path(name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, ensure_ascii=False)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(replacement, state_path)
+    finally:
+        replacement.unlink(missing_ok=True)
+
+
+def _clear_direct_transfer_state(temporary: Path, state_path: Path) -> None:
+    temporary.unlink(missing_ok=True)
+    state_path.unlink(missing_ok=True)
+
+
+def _open_direct_transfer_file(temporary: Path, offset: int) -> tuple[int, int]:
+    if temporary.is_symlink():
+        raise MediaDownloadError("Direct transfer temporary path is not a regular file")
+    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+    fd = os.open(temporary, flags, 0o600)
+    try:
+        path_info = temporary.lstat()
+        info = os.fstat(fd)
+        if (
+            not stat.S_ISREG(info.st_mode)
+            or not stat.S_ISREG(path_info.st_mode)
+            or (info.st_dev, info.st_ino) != (path_info.st_dev, path_info.st_ino)
+        ):
+            raise MediaDownloadError("Direct transfer temporary path is not a regular file")
+        if info.st_size != offset:
+            os.ftruncate(fd, 0)
+            offset = 0
+        return fd, offset
+    except BaseException:
+        os.close(fd)
+        raise
+
+
 def _publish_paired_or_reuse_identical(temporary: Path, destination: Path) -> Path:
     """Publish at the exact paired path, or reuse it only after a full comparison."""
     try:
@@ -111,6 +283,20 @@ def _publish_paired_or_reuse_identical(temporary: Path, destination: Path) -> Pa
             ) from exc
         temporary.unlink()
     return destination
+
+
+_HLS_CONTENT_TYPES = {
+    "application/vnd.apple.mpegurl",
+    "application/x-mpegurl",
+    "audio/mpegurl",
+    "audio/x-mpegurl",
+}
+
+
+def _looks_like_hls(url: str, content_type: str) -> bool:
+    if content_type.lower() in _HLS_CONTENT_TYPES:
+        return True
+    return urlsplit(url).path.lower().endswith(".m3u8")
 
 
 class TransferMixin:
@@ -377,6 +563,9 @@ class TransferMixin:
                         ydl,
                         title_byte_limit=self.config.filename_limit,
                         fallback_media_id=item.media_id or item.id,
+                        # yt-dlp 写文件到 staging_dir（比 output_dir 更深），
+                        # 用它计算剩余路径预算，避免 Windows MAX_PATH 溢出。
+                        parent_path_length=len(str((staging_dir or output_dir).absolute())),
                     ),
                     when="pre_process",
                 )
@@ -786,6 +975,7 @@ class TransferMixin:
                 if should_cancel():
                     raise DownloadCancelledError("Task cancelled")
                 response = None
+                transfer_lock: ProjectLock | None = None
                 try:
                     if is_douyin_source:
                         if transfer_budget is None:
@@ -865,6 +1055,37 @@ class TransferMixin:
                         request_headers["User-Agent"] = DOUYIN_MEDIA_HEADERS[
                             "User-Agent"
                         ]
+                    transfer_temporary, transfer_state_path = _direct_transfer_paths(
+                        output_dir,
+                        source_url=source_url,
+                        media_id=media_id,
+                        platform=platform,
+                        media_type=media_type,
+                        asset_index=asset_index,
+                        paired_stem=paired_stem,
+                    )
+                    transfer_lock = ProjectLock(
+                        _direct_transfer_lock_path(transfer_temporary)
+                    )
+                    try:
+                        transfer_lock.acquire(blocking=False)
+                    except (ProjectLockHeldError, RuntimeErrorBase) as exc:
+                        raise MediaDownloadError(
+                            "Another task is using the same media transfer file"
+                        ) from exc
+                    resume_offset, resume_state = (
+                        _load_direct_transfer_state(
+                            transfer_temporary, transfer_state_path
+                        )
+                        if media_type == MediaType.VIDEO
+                        else (0, {})
+                    )
+                    if resume_offset:
+                        request_headers["Range"] = f"bytes={resume_offset}-"
+                        if "etag" in resume_state:
+                            request_headers["If-Range"] = resume_state["etag"]
+                        else:
+                            request_headers["If-Range"] = resume_state["last_modified"]
                     media_request = Request(
                         candidate,
                         headers=request_headers,
@@ -979,6 +1200,36 @@ class TransferMixin:
                         .split(";", 1)[0]
                         .lower()
                     )
+                    if _looks_like_hls(candidate, content_type):
+                        # 快手等平台会下发 HLS(m3u8)。直接按字节保存只会得到
+                        # 一个播放列表文本文件，后续 FFprobe 必然失败。交给
+                        # FFmpeg 拉流并无损封装为 mp4。
+                        response.close()
+                        _clear_direct_transfer_state(
+                            transfer_temporary, transfer_state_path
+                        )
+                        return self._download_hls_asset(
+                            candidate_url=final_url,
+                            request_headers=request_headers,
+                            media_type=media_type,
+                            asset=asset,
+                            output_dir=output_dir,
+                            upload_date=upload_date,
+                            title=title,
+                            media_id=media_id,
+                            platform=platform,
+                            asset_index=asset_index,
+                            compact_names=compact_names,
+                            paired_stem=paired_stem,
+                            pair_image=pair_image,
+                            is_kuaishou_source=is_kuaishou_source,
+                            verify_declared_dimensions=verify_declared_dimensions,
+                            require_quality_fingerprint=require_quality_fingerprint,
+                            callback=callback,
+                            should_cancel=should_cancel,
+                            progress_index=progress_index,
+                            progress_count=progress_count,
+                        )
                     if content_type.startswith("text/") or content_type in {
                         "application/json",
                         "application/problem+json",
@@ -995,6 +1246,77 @@ class TransferMixin:
                             "Media server returned a text or metadata response "
                             "instead of a media file"
                         )
+                    response_status = int(
+                        getattr(response, "status", None)
+                        or getattr(response, "status_code", None)
+                        or 200
+                    )
+                    response_etag = str(response.headers.get("ETag") or "").strip()
+                    response_modified = str(
+                        response.headers.get("Last-Modified") or ""
+                    ).strip()
+                    response_total: int | None = None
+                    if response_status == 206:
+                        content_range = re.fullmatch(
+                            r"bytes (\d+)-(\d+)/(\d+)",
+                            str(response.headers.get("Content-Range") or "").strip(),
+                        )
+                        if (
+                            not resume_offset
+                            or content_range is None
+                            or int(content_range.group(1)) != resume_offset
+                            or int(content_range.group(2))
+                            < int(content_range.group(1))
+                            or int(content_range.group(3))
+                            <= int(content_range.group(2))
+                        ):
+                            _clear_direct_transfer_state(
+                                transfer_temporary, transfer_state_path
+                            )
+                            raise MediaDownloadError(
+                                "Media server returned an invalid range response"
+                            )
+                        if "etag" in resume_state:
+                            validator_matches = response_etag == resume_state["etag"]
+                        else:
+                            validator_matches = (
+                                response_modified
+                                == resume_state["last_modified"]
+                            )
+                        if not validator_matches:
+                            _clear_direct_transfer_state(
+                                transfer_temporary, transfer_state_path
+                            )
+                            raise MediaDownloadError(
+                                "Media range validator changed; restarting the transfer"
+                            )
+                        response_total = int(content_range.group(3))
+                        length_header = str(
+                            response.headers.get("Content-Length") or ""
+                        ).split(",")[0].strip()
+                        if (
+                            length_header.isdigit()
+                            and resume_offset + int(length_header) != response_total
+                        ):
+                            _clear_direct_transfer_state(
+                                transfer_temporary, transfer_state_path
+                            )
+                            raise MediaDownloadError(
+                                "Media server returned an invalid range response length"
+                            )
+                        if resume_state["total"] != response_total:
+                            _clear_direct_transfer_state(
+                                transfer_temporary, transfer_state_path
+                            )
+                            raise MediaDownloadError(
+                                "Media range total changed; restarting the transfer"
+                            )
+                    elif response_status != 200:
+                        raise MediaDownloadError(
+                            f"Media server returned unexpected HTTP {response_status}"
+                        )
+                    else:
+                        resume_offset = 0
                     transfer_started_at = time.monotonic()
                     last_transfer_report_at = 0.0
                     if callback and is_douyin_source:
@@ -1090,17 +1412,19 @@ class TransferMixin:
                     )
                     if paired_stem is not None:
                         path = path.with_name(paired_stem + path.suffix)
-                    total_header = response.headers.get("Content-Length")
-                    # 部分代理会把重复的 Content-Length 合并成 "123, 123"；
-                    # 取第一段并去空白，避免可解析的长度被误判为未知，
-                    # 否则完整性与进度检查会被整体跳过。
-                    total_value = (
-                        str(total_header).split(",")[0].strip()
-                        if total_header
-                        else ""
-                    )
-                    total = int(total_value) if total_value.isdigit() else None
-                    downloaded = len(first_chunk)
+                    total = response_total
+                    if total is None:
+                        total_header = response.headers.get("Content-Length")
+                        # 部分代理会把重复的 Content-Length 合并成 "123, 123"；
+                        # 取第一段并去空白，避免可解析的长度被误判为未知，
+                        # 否则完整性与进度检查会被整体跳过。
+                        total_value = (
+                            str(total_header).split(",")[0].strip()
+                            if total_header
+                            else ""
+                        )
+                        total = int(total_value) if total_value.isdigit() else None
+                    downloaded = resume_offset + len(first_chunk)
 
                     def progress_percent() -> float | None:
                         if not total:
@@ -1119,12 +1443,11 @@ class TransferMixin:
                             )
                         return min(100.0, local_fraction * 100.0)
 
-                    temporary_fd, temporary_name = tempfile.mkstemp(
-                        prefix=".original-media-",
-                        suffix=".part",
-                        dir=path.parent,
+                    temporary_fd, resume_offset = _open_direct_transfer_file(
+                        transfer_temporary, resume_offset
                     )
-                    temporary = Path(temporary_name)
+                    temporary = transfer_temporary
+                    last_transfer_checkpoint = resume_offset
 
                     def emit_transfer_progress(*, force: bool = False) -> None:
                         nonlocal last_transfer_report_at
@@ -1163,9 +1486,19 @@ class TransferMixin:
                         last_transfer_report_at = now
 
                     try:
-                        with os.fdopen(temporary_fd, "wb") as handle:
+                        with os.fdopen(temporary_fd, "r+b") as handle:
                             temporary_fd = -1
+                            handle.seek(resume_offset)
                             handle.write(first_chunk)
+                            _save_direct_transfer_state(
+                                transfer_state_path,
+                                offset=downloaded,
+                                total=total,
+                                etag=response_etag,
+                                last_modified=response_modified,
+                                media_handle=handle,
+                            )
+                            last_transfer_checkpoint = downloaded
                             emit_transfer_progress(force=True)
                             while True:
                                 if should_cancel():
@@ -1187,6 +1520,16 @@ class TransferMixin:
                                 if transfer_budget is not None:
                                     transfer_budget.refresh()
                                 emit_transfer_progress()
+                                if downloaded - last_transfer_checkpoint >= 16 * 1024 * 1024:
+                                    _save_direct_transfer_state(
+                                        transfer_state_path,
+                                        offset=downloaded,
+                                        total=total,
+                                        etag=response_etag,
+                                        last_modified=response_modified,
+                                        media_handle=handle,
+                                    )
+                                    last_transfer_checkpoint = downloaded
                             if total is not None and downloaded != total:
                                 raise MediaDownloadError(
                                     f"Incomplete media response: expected {total} bytes, "
@@ -1231,11 +1574,27 @@ class TransferMixin:
                             path = publish_pair_image(temporary, path)
                         else:
                             path = publish_or_reuse_identical(temporary, path)
-                    except BaseException:
+                        _clear_direct_transfer_state(temporary, transfer_state_path)
+                    except BaseException as exc:
                         if temporary_fd >= 0:
                             with contextlib.suppress(OSError):
                                 os.close(temporary_fd)
-                        temporary.unlink(missing_ok=True)
+                        preserve_partial = isinstance(
+                            exc, DownloadCancelledError
+                        ) or self._is_retryable_network_transfer_error(exc)
+                        if preserve_partial and (
+                            (response_etag and not response_etag.startswith("W/"))
+                            or response_modified
+                        ):
+                            _save_direct_transfer_state(
+                                transfer_state_path,
+                                offset=downloaded,
+                                total=total,
+                                etag=response_etag,
+                                last_modified=response_modified,
+                            )
+                        else:
+                            _clear_direct_transfer_state(temporary, transfer_state_path)
                         raise
                     if total is None:
                         total = downloaded
@@ -1291,6 +1650,8 @@ class TransferMixin:
                     if response is not None:
                         with contextlib.suppress(Exception):
                             response.close()
+                    if transfer_lock is not None:
+                        transfer_lock.release()
         if douyin_transient_errors:
             detail = douyin_transient_errors[-1]
             if _douyin_transfer_attempt < DOUYIN_TRANSFER_ATTEMPTS:
@@ -1424,8 +1785,186 @@ class TransferMixin:
             return (
                 "incomplete media response" in message
                 or "empty response" in message
+                or "hls 拉流超过总时长限制" in message
+                or "hls 拉流长时间无进展" in message
+                or "invalid range response" in message
+                or "range validator changed" in message
             )
         return False
+
+    def _download_hls_asset(
+        self,
+        *,
+        candidate_url: str,
+        request_headers: dict[str, str],
+        media_type: Any,
+        asset: RemoteAsset,
+        output_dir: Path,
+        upload_date: str | None,
+        title: str,
+        media_id: str,
+        platform: Any,
+        asset_index: int | None,
+        compact_names: bool,
+        paired_stem: str | None,
+        pair_image: bool,
+        is_kuaishou_source: bool,
+        verify_declared_dimensions: bool,
+        require_quality_fingerprint: bool,
+        callback: Callable[[EngineEvent], None] | None,
+        should_cancel: CancelCallback,
+        progress_index: int | None,
+        progress_count: int | None,
+    ) -> tuple[Path, RemoteAsset]:
+        """用 FFmpeg 拉取 HLS 并封装为 mp4，再走原有的校验与发布流程。"""
+
+        executable = self._find_ffmpeg_executable()
+        if not executable:
+            raise MediaDownloadError(FFPROBE_REQUIRED_MESSAGE)
+        extension = "mp4"
+        path = self._xhs_output_path(
+            output_dir,
+            upload_date,
+            title,
+            media_id,
+            extension,
+            asset_index,
+            platform,
+            compact_names=compact_names,
+        )
+        if paired_stem is not None:
+            path = path.with_name(paired_stem + path.suffix)
+        temporary_fd, temporary_name = tempfile.mkstemp(
+            prefix=".original-media-",
+            suffix=".mp4.part",
+            dir=path.parent,
+        )
+        os.close(temporary_fd)
+        temporary = Path(temporary_name)
+        header_lines = "\r\n".join(
+            f"{name}: {value}"
+            for name, value in request_headers.items()
+            if value and name.lower() in {"user-agent", "referer"}
+        )
+        command = [executable, "-hide_banner", "-loglevel", "error", "-y"]
+        command += [
+            "-rw_timeout",
+            str(max(1, int(self.config.hls_idle_timeout_seconds * 1_000_000))),
+        ]
+        if header_lines:
+            command += ["-headers", header_lines + "\r\n"]
+        command += [
+            "-i",
+            candidate_url,
+            "-c",
+            "copy",
+            "-bsf:a",
+            "aac_adtstoasc",
+            "-f",
+            "mp4",
+            str(temporary),
+        ]
+        if callback:
+            callback(
+                EngineEvent(
+                    event="downloading",
+                    progress=TransferProgress(
+                        filename=str(path),
+                        percent=0.0,
+                    ),
+                )
+            )
+        try:
+            process = subprocess.Popen(
+                command,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.PIPE,
+            )
+            try:
+                started_at = time.monotonic()
+                last_progress_at = started_at
+                last_size = -1
+                while process.poll() is None:
+                    if should_cancel():
+                        process.kill()
+                        raise DownloadCancelledError("Task cancelled")
+                    now = time.monotonic()
+                    if now - started_at >= self.config.hls_total_timeout_seconds:
+                        process.kill()
+                        raise MediaDownloadError("HLS 拉流超过总时长限制")
+                    try:
+                        size = temporary.stat().st_size
+                    except OSError:
+                        size = 0
+                    if size != last_size:
+                        last_size = size
+                        last_progress_at = now
+                    elif now - last_progress_at >= self.config.hls_idle_timeout_seconds:
+                        process.kill()
+                        raise MediaDownloadError("HLS 拉流长时间无进展")
+                    time.sleep(0.2)
+            finally:
+                if process.poll() is None:
+                    process.kill()
+                stderr = process.communicate()[1] or b""
+            if process.returncode != 0:
+                detail = stderr.decode("utf-8", "replace").strip()[-300:]
+                raise MediaDownloadError(
+                    "HLS 拉流失败" + (f"：{detail}" if detail else "")
+                )
+            if not temporary.is_file() or temporary.stat().st_size == 0:
+                raise MediaDownloadError("HLS 拉流没有得到任何媒体数据")
+            chosen = asset
+            if verify_declared_dimensions and media_type == MediaType.VIDEO:
+                chosen = self._verify_local_video_asset(
+                    temporary,
+                    asset,
+                    should_cancel=should_cancel,
+                    require_quality_fingerprint=require_quality_fingerprint,
+                )
+            if should_cancel():
+                raise DownloadCancelledError("Task cancelled")
+            if paired_stem is not None:
+                path = _publish_paired_or_reuse_identical(temporary, path)
+            elif is_kuaishou_source:
+                path = self._publish_kuaishou_asset(
+                    temporary,
+                    output_dir,
+                    upload_date,
+                    title,
+                    media_id,
+                    extension,
+                    asset_index,
+                    should_cancel=should_cancel,
+                    compact_names=compact_names,
+                )
+            elif pair_image:
+                path = publish_pair_image(temporary, path)
+            else:
+                path = publish_or_reuse_identical(temporary, path)
+            if callback:
+                size = path.stat().st_size
+                percent = 100.0
+                if progress_index and progress_count:
+                    percent = min(
+                        100.0, progress_index * 100.0 / progress_count
+                    )
+                callback(
+                    EngineEvent(
+                        event="downloading",
+                        progress=TransferProgress(
+                            downloaded_bytes=size,
+                            total_bytes=size,
+                            percent=percent,
+                            filename=str(path),
+                        ),
+                    )
+                )
+            return path.resolve(), chosen
+        except BaseException:
+            temporary.unlink(missing_ok=True)
+            raise
 
     def _verify_local_video_asset(
         self,

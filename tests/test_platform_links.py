@@ -205,6 +205,7 @@ assert(structuredHtml.includes('腾讯未返回播放信息'), '结构化卡片�
 """
     path = tmp_path / "link-test.js"
     path.write_text(script, encoding="utf-8")
-    result = subprocess.run([node, str(path)], capture_output=True, text=True, encoding="utf-8", timeout=15)
+    # Windows CI 冷启动可能超过 15s，放宽到 45s 避免偶发超时。
+    result = subprocess.run([node, str(path)], capture_output=True, text=True, encoding="utf-8", timeout=45)
     assert result.returncode == 0, result.stderr
 

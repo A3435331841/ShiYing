@@ -50,7 +50,11 @@ def search_url(platform: Platform, keyword: str) -> str:
         return SEARCH_URLS[platform].format(query=urlencode({"keyword": keyword}))
     from urllib.parse import quote
 
-    return SEARCH_URLS[platform].format(keyword=quote(keyword, safe=""))
+    url = SEARCH_URLS[platform].format(keyword=quote(keyword, safe=""))
+    if platform is Platform.DOUYIN:
+        # 抖音网页搜索现在需要显式 type=general 才会发起搜索接口请求。
+        return f"{url}?type=general"
+    return url
 
 
 # ---------------------------------------------------------------------------
@@ -281,7 +285,11 @@ def is_target_response(platform: Platform, url: str, request_body: Any) -> bool:
     if platform is Platform.DOUYIN:
         return "/aweme/v1/web/" in path and "search" in path
     if platform is Platform.XIAOHONGSHU:
-        return path == "/api/sns/web/v1/search/notes"
+        # 站点已把搜索接口从 v1 迁到 v2；两个版本都接，避免升级后静默零结果。
+        return path in {
+            "/api/sns/web/v1/search/notes",
+            "/api/sns/web/v2/search/notes",
+        }
     if platform is Platform.KUAISHOU:
         # 实测（2026-11）：网页搜索走 /rest/v/search/feed；旧版/详情走 GraphQL。
         if path == "/rest/v/search/feed":
@@ -343,6 +351,7 @@ def _classify_empty_page(page: Any, *, search_url: str, platform: Platform) -> B
 
     title = ""
     body = ""
+    landing_url = ""
     with contextlib.suppress(Exception):
         title = str(page.title() or "")
     with contextlib.suppress(Exception):
@@ -350,8 +359,11 @@ def _classify_empty_page(page: Any, *, search_url: str, platform: Platform) -> B
             page.evaluate("() => (document.body && document.body.innerText || '').slice(0, 600)")
             or ""
         )
+    with contextlib.suppress(Exception):
+        landing_url = str(getattr(page, "url", "") or "")
     text = f"{title}\n{body}"
     lowered = text.lower()
+    landing_lowered = landing_url.lower()
     hint = "请在设置 → AI 搜索 → 搜索登录态中点对应平台的登录按钮，扫码登录后再搜索"
     if any(marker in text for marker in ("验证码", "安全验证", "滑块", "captcha", "验证中间页")) or "captcha" in lowered:
         return AuthenticationRequiredError(
@@ -371,9 +383,20 @@ def _classify_empty_page(page: Any, *, search_url: str, platform: Platform) -> B
             verification_url=search_url,
             issue_code=SiteIssueCode.LOGIN_REQUIRED,
         )
-    if platform is Platform.DOUYIN and "登录" in text:
+    # 抖音匿名搜索会被跳到验证码中间页；验证码常由 iframe/JS 渲染，落地页
+    # 正文可能为空或只有「正在加载」，读不到上面的中文关键词。此时若页面的
+    # 标题/URL 仍是搜索页却没有任何捕获结果，最可能的解释就是验证/登录拦截，
+    # 给出可行动提示而不是含糊的「页面结构已变化」。
+    if platform is Platform.DOUYIN and (
+        "登录" in text
+        or any(
+            marker in landing_lowered
+            for marker in ("captcha", "verify", "verification", "passport", "login", "security")
+        )
+        or not body.strip()
+    ):
         return AuthenticationRequiredError(
-            f"抖音要求登录后才能搜索。{hint}",
+            f"抖音搜索被安全验证或登录拦截，未返回候选。{hint}",
             verification_url=search_url,
             issue_code=SiteIssueCode.LOGIN_REQUIRED,
         )

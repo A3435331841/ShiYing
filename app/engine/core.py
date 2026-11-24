@@ -89,7 +89,7 @@ from .douyin_media import DouyinMediaMixin
 from .douyin_probe import DouyinProbeMixin
 from .naming import NamingMixin
 from .platform_items import PlatformItemsMixin
-from .transfer import TransferMixin
+from .transfer import TransferMixin, direct_transfer_scope
 
 
 class MediaDownloader(
@@ -170,15 +170,74 @@ class MediaDownloader(
             return [entry for entry in entries if isinstance(entry, dict)]
         entries, _ = self._run_with_cookie_fallback(operation, url=pseudo_url)
         return entries[:limit]
+    def _xiaohongshu_cookie_profile(self) -> str | None:
+        """XHS 浏览器 Cookie 来源：显式 Chrome profile 优先，其次搜索 Profile。"""
+
+        if self.config.cookie_browser is None and self._search_profile_available():
+            return str(self.config.search_profile_dir)
+        return self.config.cookie_profile
+
     def _xiaohongshu_browser_cookies_enabled(self) -> bool:
         if self.config.cookie_browser is None:
-            return False
+            # 没有显式 Chrome Cookie 但搜索 Profile 有登录态时，同样视作可用。
+            return self._search_profile_available()
         if self.config.cookie_browser != "chrome":
             raise TemporaryAccessError(XIAOHONGSHU_COOKIE_BROWSER_ERROR)
         if not str(self.config.cookie_profile or "").strip():
             raise TemporaryAccessError(XIAOHONGSHU_COOKIE_PROFILE_ERROR)
         return True
+    def _douyin_cookie_profile(self) -> str | None:
+        """抖音浏览器 Cookie 来源：显式 Chrome profile 优先，其次搜索 Profile。
+
+        抖音主页/短链发现要求登录态；AI 搜索登录保存在独立 search-profile 中，
+        匿名任务没有显式 Chrome Cookie 时应复用它，否则明明有登录态却报 needs_auth。
+        """
+
+        if self.config.cookie_browser is None and self._search_profile_available():
+            return str(self.config.search_profile_dir)
+        return self.config.cookie_profile
+
+    def _douyin_browser_cookies_enabled(self) -> bool:
+        if self.config.cookie_browser is None:
+            return self._search_profile_available()
+        return self.config.cookie_browser == "chrome"
+
+    def _kuaishou_cookie_profile(self) -> str | None:
+        """快手浏览器 Cookie 来源：显式 Chrome profile 优先，其次搜索 Profile。
+
+        快手主页/合集发现要求网页登录态；AI 搜索登录保存在独立 search-profile
+        中（含 userId/passToken 等），匿名任务没有显式 Chrome Cookie 时应复用，
+        否则明明有登录态却报 needs_auth。
+        """
+
+        if self.config.cookie_browser is None and self._search_profile_available():
+            return str(self.config.search_profile_dir)
+        return self.config.cookie_profile
+
+    def _kuaishou_browser_cookies_enabled(self) -> bool:
+        if self.config.cookie_browser is None:
+            return self._search_profile_available()
+        return self.config.cookie_browser == "chrome"
     def download_item(
+        self,
+        item: DownloadItem,
+        platform: Platform,
+        output_dir: str | Path,
+        *,
+        callback: EventCallback | None = None,
+        should_cancel: CancelCallback | None = None,
+    ) -> DownloadOutcome:
+        job_id = str(item.metadata.get("_job_id") or "direct")
+        with direct_transfer_scope(f"{job_id}:{item.id}"):
+            return self._download_item(
+                item,
+                platform,
+                output_dir,
+                callback=callback,
+                should_cancel=should_cancel,
+            )
+
+    def _download_item(
         self,
         item: DownloadItem,
         platform: Platform,
@@ -253,8 +312,19 @@ class MediaDownloader(
             callback=callback,
             should_cancel=should_cancel,
         )
+    def _search_profile_available(self) -> bool:
+        profile = getattr(self.config, "search_profile_dir", None)
+        return bool(profile and Path(profile).is_dir())
+
     def _cookie_options(self, use_cookies: bool) -> dict[str, Any]:
-        if not use_cookies or not self.config.cookie_browser:
+        if not use_cookies:
+            return {}
+        # 没有显式 Chrome Cookie 时复用 AI 搜索的登录 Profile。yt-dlp 支持把
+        # 绝对 profile 路径作为 cookiesfrombrowser 的第二个参数，这样搜索到的
+        # 笔记/视频能带已登录会话下载，而不是只能匿名（匿名大多落到 404）。
+        if not self.config.cookie_browser and self._search_profile_available():
+            return {"cookiesfrombrowser": ("chrome", str(self.config.search_profile_dir))}
+        if not self.config.cookie_browser:
             return {}
         value: tuple[str, ...]
         if self.config.cookie_profile:
@@ -280,7 +350,8 @@ class MediaDownloader(
         *,
         url: str,
     ) -> tuple[Any, bool]:
-        use_cookies = bool(self.config.cookie_browser)
+        # 搜索 Profile 也是有效的 Cookie 来源，需一并纳入「是否尝试带 Cookie」。
+        use_cookies = bool(self.config.cookie_browser) or self._search_profile_available()
         try:
             return operation(use_cookies), False
         except DownloadCancelled:

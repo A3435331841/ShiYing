@@ -1,0 +1,94 @@
+{
+  "schema_version": 1,
+  "updated_at": "2026-11-24",
+  "platforms": {
+    "bilibili": {
+      "label": "B站",
+      "download": "supported",
+      "search": "supported",
+      "requires_login": false,
+      "reason": "自动化回归覆盖；真实平台下载验收未单独执行",
+      "verified_at": null,
+      "evidence": null,
+      "channels": {}
+    },
+    "douyin": {
+      "label": "抖音",
+      "download": "supported",
+      "search": "supported",
+      "requires_login": false,
+      "reason": "自动化回归覆盖；真实平台下载验收未单独执行",
+      "verified_at": null,
+      "evidence": null,
+      "channels": {}
+    },
+    "selected-douyin": {
+      "label": "抖音精选",
+      "download": "supported",
+      "search": "unavailable",
+      "requires_login": false,
+      "reason": "沿用抖音解析器链路，可识别精选分享文案；精选独有内容尚未独立实测，不宣称已完成真机验收",
+      "verified_at": null,
+      "evidence": null,
+      "channels": {}
+    },
+    "youtube": {
+      "label": "YouTube",
+      "download": "supported",
+      "search": "supported",
+      "requires_login": false,
+      "reason": "自动化回归覆盖；基础下载可用，高清签名依赖 Deno，真实平台验收未单独执行",
+      "verified_at": null,
+      "evidence": null,
+      "channels": {}
+    },
+    "kuaishou": {
+      "label": "快手",
+      "download": "experimental",
+      "search": "supported",
+      "requires_login": true,
+      "reason": "实验通道：需网页登录态，真实作品下载验收尚未完成",
+      "verified_at": null,
+      "evidence": null,
+      "channels": {},
+      "confirm_required": true
+    },
+    "xiaohongshu": {
+      "label": "小红书",
+      "download": "experimental",
+      "search": "supported",
+      "requires_login": true,
+      "reason": "实验通道：受登录态与风控影响，真实笔记验收尚未完成",
+      "verified_at": null,
+      "evidence": null,
+      "channels": {},
+      "confirm_required": true
+    },
+    "wechat": {
+      "label": "视频号",
+      "download": "experimental",
+      "search": "unavailable",
+      "requires_login": true,
+      "reason": "仅元宝登录态路径可用",
+      "verified_at": null,
+      "evidence": null,
+      "channels": {
+        "client_capture": {
+          "label": "客户端抓取",
+          "download": "unavailable",
+          "search": "unavailable",
+          "requires_login": false,
+          "reason": "客户端抓取暂不可用，可用元宝登录态"
+        },
+        "yuanbao": {
+          "label": "元宝路径",
+          "download": "experimental",
+          "search": "unavailable",
+          "requires_login": true,
+          "reason": "需用户自身元宝登录态，真实作品验收尚未完成"
+        }
+      },
+      "confirm_required": false
+    }
+  }
+}

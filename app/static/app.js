@@ -1267,7 +1267,10 @@
       return "无法读取快手的 Chrome Cookie，但现有信息不足以确定原因。请核对已登录的 Chrome Profile 与本机读取权限后重试；仅在你明确关闭 Cookie 时才使用未登录模式，不会静默切换账号。";
     }
     const messages = [
-      ["Only Xiaohongshu, Douyin, Kuaishou, Bilibili, and YouTube URLs are supported", "目前支持小红书、抖音、快手、B站和 YouTube，请粘贴这些平台的视频或主页链接。"],
+      ["Only Xiaohongshu, Douyin, Kuaishou, Bilibili, WeChat Channels, and YouTube URLs are supported", "目前支持小红书、抖音、快手、B站、微信视频号和 YouTube，请粘贴这些平台的视频或主页链接。"],
+      // Legacy wording kept for in-flight/queued error messages produced before
+      // WeChat Channels was added to the supported-platform list.
+      ["Only Xiaohongshu, Douyin, Kuaishou, Bilibili, and YouTube URLs are supported", "目前支持小红书、抖音、快手、B站、微信视频号和 YouTube，请粘贴这些平台的视频或主页链接。"],
       ["Opening Kuaishou in Chrome", "正在通过 Chrome 读取快手原页面并核对视频信息"],
       ["Refreshing Kuaishou video links", "正在从快手原视频页刷新下载地址并再次核对身份"],
       ["Kuaishou requires security verification", "快手要求安全验证。请打开 Chrome 完成验证，然后返回继续任务；程序不会绕过验证码。"],
@@ -1310,6 +1313,12 @@
     let text = asText(value);
     const signingValidation = douyinSigningValidationMessage(text);
     if (signingValidation) return signingValidation;
+    if (text.startsWith("The application stopped before this task finished. Retry to continue.")) {
+      return "应用在此任务完成前已停止。重新打开程序后重试即可继续，已完成的文件会保留。";
+    }
+    if (text.startsWith("Interrupted when the application stopped")) {
+      return "应用已停止，正在下载的作品已中断。重新打开程序后可从原任务继续，已下载的文件会保留。";
+    }
     if (text.startsWith("Could not save settings. Check free disk space and write permissions for the project's data folder")) {
       return "设置未能保存，程序仍在使用之前的设置。请检查磁盘剩余空间，以及项目 data 文件夹是否有写入权限，处理后再次点击“保存设置”。";
     }
@@ -1711,17 +1720,39 @@
     const response = await fetch(path, requestOptions);
     if (!response.ok) {
       let detail = "";
+      let code;
       try {
         const data = await response.json();
         detail = asText(firstDefined(data?.detail, data?.message, data?.error));
+        if (data?.detail && typeof data.detail === "object") code = data.detail.code;
       } catch {
         detail = await response.text().catch(() => "");
       }
-      throw new Error(detail || `请求失败（${response.status}）`);
+      const error = new Error(detail || `请求失败（${response.status}）`);
+      error.code = code;
+      throw error;
     }
     if (response.status === 204) return null;
     const contentType = response.headers.get("content-type") || "";
     return contentType.includes("application/json") ? response.json() : null;
+  }
+
+  // 实验通道需用户明确确认：后端返回 409 + code，弹窗同意后带字段重试。
+  // 会话内确认一次即可，避免重复弹窗。
+  let experimentalConfirmed = false;
+  async function createJobWithConfirm(body) {
+    const payload = experimentalConfirmed ? { ...body, confirmed_experimental: true } : body;
+    try {
+      return await api("/api/jobs", { method: "POST", body: JSON.stringify(payload) });
+    } catch (error) {
+      if (error?.code !== "experimental_confirmation_required" || experimentalConfirmed) throw error;
+      if (!window.confirm(`${error.message || "该平台为实验通道"}\n\n仍要创建下载任务吗？`)) throw error;
+      experimentalConfirmed = true;
+      return api("/api/jobs", {
+        method: "POST",
+        body: JSON.stringify({ ...body, confirmed_experimental: true }),
+      });
+    }
   }
 
   function showToast(message, type = "success", durationMs = 4200) {
@@ -2508,10 +2539,7 @@
 
     setButtonLoading(elements.downloadButton, true, "正在创建");
     try {
-      const payload = await api("/api/jobs", {
-        method: "POST",
-        body: JSON.stringify({ url })
-      });
+      const payload = await createJobWithConfirm({ url });
       const job = extractJob(payload);
       if (job) {
         const merged = upsertJob(job);

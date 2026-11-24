@@ -6,9 +6,9 @@
 仅 ``ProviderRegistry`` 持有可变映射，内部用 RLock 保护，可由多个工作线程
 安全共享。本模块自身不执行 I/O，可被主进程与异步线程池同时导入。
 
-主要调用方：``app/platforms/<platform>/provider.py`` 的具体实现，以及未来
-由调度层按 Platform 枚举查找提供者的注册中心。当前处于四步走演进路线的
-第三步起点：契约与 YouTube 适配器已落地，其余平台仍由 app/engine/ 执行。
+主要调用方：``app/platforms/<platform>/provider.py`` 的具体实现，以及
+``app.platforms.registry`` 的统一装配入口。各平台通过统一契约委托现有
+``MediaDownloader``，核心引擎不感知平台逆向细节。
 """
 
 from __future__ import annotations
@@ -151,15 +151,22 @@ class PlatformProvider(ABC):
         ...
 
     @abstractmethod
-    def discover(self, target: UrlInfo, auth: SessionAuth) -> list[DownloadItem]:
-        """展开单作品、多 P、合集或主页，产出标准下载条目集合。
+    def discover(
+        self,
+        target: UrlInfo,
+        auth: SessionAuth,
+        *,
+        should_cancel: Any = None,
+    ) -> Any:
+        """展开单作品、多 P、合集或主页，产出标准 DiscoveryResult 对象。
 
         Args:
             target: identify 阶段产出的标准 URL 信息。
             auth: 会话鉴权策略。
+            should_cancel: 可选的取消谓词，由任务管理器传入。
 
         Returns:
-            标准 DownloadItem 列表。
+            兼容 ``DiscoveryResult`` 的结果对象，保留作者、警告与完整性标记。
 
         Raises:
             DownloadCancelledError: 用户取消本次发现。

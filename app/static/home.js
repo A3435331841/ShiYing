@@ -6,13 +6,28 @@
     isActive: job => ['queued', 'discovering', 'capturing', 'downloading', 'postprocessing', 'cancelling'].includes(job.status),
     needsAction: job => ['partial', 'failed', 'needs_auth', 'interrupted', 'cancelled'].includes(job.status)
   });
-  const state = { jobs: new Map(), deleted: new Set(), pendingRemoval: [], pendingSubmit: null, config: null, filter: 'all', view: 'home', ready: false, everLoaded: false, refreshSettled: false, busy: false, refreshing: false, detailId: null, eventSource: null, sseUp: false, recovery: null, query: '', queries: {home: '', tasks: '', completed: ''}, mediaFilter: 'all', platformFilter: 'all', sortOrder: 'newest', manageCompleted: false, selectedCompleted: new Set(), visibleCompleted: [], emptyAction: 'add', cacheCheckedAt: 0, searchHits: [], searchBusy: false, searchRequestId: null };
+  const state = { jobs: new Map(), deleted: new Set(), pendingRemoval: [], pendingSubmit: null, config: null, filter: 'all', view: 'home', ready: false, everLoaded: false, versionBlocked: false, refreshSettled: false, busy: false, refreshing: false, detailId: null, eventSource: null, sseUp: false, recovery: null, query: '', queries: {home: '', tasks: '', completed: ''}, mediaFilter: 'all', platformFilter: 'all', sortOrder: 'newest', manageCompleted: false, selectedCompleted: new Set(), visibleCompleted: [], emptyAction: 'add', composerCollapsed: undefined, cacheCheckedAt: 0, searchHits: [], searchBusy: false, searchRequestId: null,
+    // 资料库分页状态：GET /api/jobs?view=library 返回 {items,next_cursor,total_estimate,index_status}。
+    // order/wechatKeys 存 state.jobs 的键，真正的数据仍在 state.jobs 中，详情/移除逻辑无需改动。
+    library: { order: [], wechatKeys: [], nextCursor: null, loading: false, exhausted: false, indexStatus: 'ready', total: 0, requestId: 0 },
+    // GET /api/platforms 的三态能力登记（app/capabilities.py:PlatformCapability），
+    // 是平台标签与状态标识的权威来源；未加载时保留下面的静态兜底文案。
+    platformCapabilities: [] };
   const REQUEST_TIMEOUT_MS = 20000;
+  // 资料库改走后端游标分页：limit 上限 100（app/main.py:_library_page），每页取 50。
+  const LIBRARY_PAGE_SIZE = 50;
+  // 前端排序值 -> 后端 sort（后端只支持 created_desc / created_asc；title 由前端对已载入页排序）。
+  const LIBRARY_BACKEND_SORTS = {newest: 'created_desc', oldest: 'created_asc'};
+  // 后端 media_type 白名单（app/main.py:_LIBRARY_MEDIA_TYPES）；audio/other 留给前端筛选。
+  const LIBRARY_BACKEND_MEDIA = new Set(['video', 'image', 'unknown', 'mixed']);
   // Preview runs a full discovery, and scanning a profile can legitimately take
   // minutes; the QR login flow waits up to five minutes for the user. Those are
   // not the same budget as a normal settings or list request.
+  // 与 app/search/service.py:TOTAL_HITS_CAP 保持一致，用于提示多平台合计上限。
+  const SEARCH_TOTAL_CAP = 30;
   const PREVIEW_TIMEOUT_MS = 240000;
-  const LOGIN_TIMEOUT_MS = 360000;
+  // 与后端 300s 等待上限对齐，多留 10s 给响应传输；避免前端空等 6 分钟。
+  const LOGIN_TIMEOUT_MS = 310000;
   // AI 搜索要串行跑多个平台（含无头浏览器），比普通请求预算长得多。
   const SEARCH_TIMEOUT_MS = 90000;
   // 后端 SearchRequest.image 的上限是 8MiB 原始字节，按 base64 data URI 字符数
@@ -29,6 +44,15 @@
   const recreateRequired = job => job.wechat || job.status === 'interrupted' || job.issue_code === 'cookie_unavailable' || (job.status === 'partial' && !(job.items || []).some(i => ['failed','needs_auth','cancelled','paused'].includes(i.status)));
   const tone = job => job.status === 'completed' ? 'success' : active(job) ? 'active' : job.status === 'needs_auth' || job.status === 'partial' || job.status === 'paused' ? 'warning' : failed(job) ? 'failed' : '';
   const escape = value => String(value ?? '').replace(/[&<>"']/g, ch => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[ch]));
+  // 平台返回的标题/作者名可能已带 HTML 实体（如 &amp;）。直接 escape 会把 & 再
+  // 转一次成为 &amp;amp;，页面显示成字面实体。先还原实体再统一 escape：XSS 中
+  // 的危险字符仍会被转义为文本，防护不受影响。
+  const decodeHtmlEntities = value => String(value ?? '')
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"').replace(/&#0*39;|&apos;/g, "'")
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&');
+  const escapeDisplay = value => escape(decodeHtmlEntities(value));
   const icon = name => `<svg aria-hidden="true"><use href="#i-${name}"/></svg>`;
   const platformIcon = value => {
     const key = canonicalPlatform(value);
@@ -88,6 +112,8 @@
   };
 
   let formMessageTimer = null;
+  let libraryReloadTimer = null;
+  let libraryObserver = null;
   function setFormMessage(text, autoDismissMs = 6000) {
     if (formMessageTimer) {
       if (typeof clearTimeout !== 'undefined') clearTimeout(formMessageTimer);
@@ -134,9 +160,24 @@
         : detail?.[0]?.msg;
       const error = new Error(message || `请求失败（${response.status}），请稍后重试。`);
       error.httpStatus = response.status;
+      error.code = detail && typeof detail === 'object' ? detail.code : undefined;
       throw error;
     }
     return response.json();
+  }
+  // 实验通道需用户明确确认：后端返回 409 + code，弹窗同意后带字段重试。
+  // 会话内确认一次即可，避免批量下载时反复弹窗。
+  let experimentalConfirmed = false;
+  async function createJobWithConfirm(body) {
+    const payload = experimentalConfirmed ? { ...body, confirmed_experimental: true } : body;
+    try {
+      return await api('/api/jobs', 'POST', payload);
+    } catch (error) {
+      if (error?.code !== 'experimental_confirmation_required' || experimentalConfirmed) throw error;
+      if (!window.confirm(`${error.message || '该平台为实验通道'}\n\n仍要创建下载任务吗？`)) throw error;
+      experimentalConfirmed = true;
+      return api('/api/jobs', 'POST', { ...body, confirmed_experimental: true });
+    }
   }
   function connection(ready, message) {
     state.ready = ready; $('#connection').className = `connection ${ready ? 'online' : 'offline'}`;
@@ -302,7 +343,7 @@
     const fallbackClass = isLive ? 'media-live' : mediaKind === 'image' ? 'media-image' : 'media-video';
     return `<article class="task-row platform-${escape(platform)}${library ? ' completed-row' : ''}${state.selectedCompleted.has(key) ? ' row-selected' : ''}" data-key="${escape(key)}">
       <div class="content-cell">
-        ${library && state.manageCompleted ? `<label class="task-select"><input type="checkbox" data-select-key="${escape(key)}" aria-label="选择：${escape(title(job))}" ${state.selectedCompleted.has(key) ? 'checked' : ''}></label>` : ''}
+        ${library && state.manageCompleted ? `<label class="task-select"><input type="checkbox" data-select-key="${escape(key)}" aria-label="选择：${escape(title(job))}" ${state.selectedCompleted.has(key) ? 'checked' : ''}${state.versionBlocked ? ' disabled' : ''}></label>` : ''}
         <div class="task-thumb-wrap ${fallbackClass}${isLoaded ? ' has-cover' : ''}" aria-hidden="true">${imgTag}<div class="media-placeholder" aria-hidden="true">${platformIcon(platform)}<small>${escape(platforms[platform] || '文件')}</small></div></div>
         <div class="task-copy">
           <button class="task-title" data-action="detail" title="${escape(title(job))}">${escape(title(job))}</button>
@@ -318,6 +359,8 @@
   }
   function render() {
     const jobs = [...state.jobs.entries()], counts = taskViews.counts(jobs), library = state.view === 'completed';
+    // 资料库的行数据来自后端分页结果（order + 微信补充）；其余视图仍用完整任务表。
+    const source = library ? libraryEntries() : jobs;
     $('#nav-count').textContent = counts.unfinished;
     $('#nav-count').title = `${counts.unfinished} 个未完成任务，含暂停和需处理任务`;
     $('[data-view="tasks"]').setAttribute('aria-label', `下载任务，${counts.unfinished} 个未完成`);
@@ -325,7 +368,9 @@
     $$('#task-tabs button').forEach(b => { b.classList.toggle('active', b.dataset.filter === state.filter); b.setAttribute('aria-pressed', String(b.dataset.filter === state.filter)); });
     $$('#media-tabs button').forEach(b => { b.classList.toggle('active', b.dataset.mediaFilter === state.mediaFilter); b.setAttribute('aria-pressed', String(b.dataset.mediaFilter === state.mediaFilter)); });
     $('[data-media-filter="other"]').hidden = state.mediaFilter !== 'other' && !jobs.some(([, job]) => job.status === 'completed' && taskViews.mediaType(job) === 'other');
-    const matched = taskViews.select(jobs, {view: state.view, filter: state.filter, type: state.mediaFilter, platform: state.platformFilter, sort: state.sortOrder, query: state.query, platformNames: platforms});
+    // 后端已用同一组条件过滤/排序；这里对「已载入的页」再跑一次 select 是幂等的，
+    // 同时让微信补充记录与 title 排序、audio/other 等仅前端支持的筛选项保持一致。
+    const matched = taskViews.select(source, {view: state.view, filter: state.filter, type: state.mediaFilter, platform: state.platformFilter, sort: state.sortOrder, query: state.query, platformNames: platforms});
     const shown = state.view === 'home' ? matched.slice(0, 6) : matched;
     state.visibleCompleted = library ? matched.map(([key]) => key) : [];
     const visibleKeys = new Set(state.visibleCompleted);
@@ -333,10 +378,10 @@
     $('#completed-batch').hidden = !library || !state.manageCompleted;
     $('#manage-completed').setAttribute('aria-pressed', String(state.manageCompleted));
     $('#manage-completed').textContent = state.manageCompleted ? '完成管理' : '批量管理';
-    $('#manage-completed').disabled = !counts.completed && !state.manageCompleted;
+    $('#manage-completed').disabled = state.versionBlocked || (!counts.completed && !state.manageCompleted);
     $('#completed-selection-count').textContent = `已选 ${state.selectedCompleted.size} 条`;
-    $('#remove-selected').disabled = !state.selectedCompleted.size;
-    $('#select-visible').disabled = !state.visibleCompleted.length;
+    $('#remove-selected').disabled = state.versionBlocked || !state.selectedCompleted.size;
+    $('#select-visible').disabled = state.versionBlocked || !state.visibleCompleted.length;
     $('#select-visible').checked = state.visibleCompleted.length > 0 && state.selectedCompleted.size === state.visibleCompleted.length;
     $('#select-visible').indeterminate = state.selectedCompleted.size > 0 && state.selectedCompleted.size < state.visibleCompleted.length;
     const html = shown.map(([key, job]) => renderTaskRow(key, job, library)).join('');
@@ -349,6 +394,7 @@
       const row = activeNode && activeNode.closest ? activeNode.closest('[data-key]') : null;
       const focusKey = row ? row.dataset.key : null;
       const focusAction = activeNode && activeNode.dataset ? activeNode.dataset.action : null;
+      const focusSelectKey = activeNode && activeNode.dataset ? activeNode.dataset.selectKey : null;
       const keepFocus = Boolean(focusKey);
 
       // 提取已有行中已经加载成功的缩略图 DOM 节点，重渲染时直接复用，彻底根治重试与进度刷新时的封面闪烁
@@ -375,7 +421,18 @@
 
       if (keepFocus) {
         const restoredRow = [...list.querySelectorAll('[data-key]')].find(node => node.dataset.key === focusKey);
-        const target = restoredRow && ((focusAction && restoredRow.querySelector(`[data-action="${focusAction}"]`)) || restoredRow.querySelector('.task-title'));
+        // 批量管理的复选框没有 data-action；重渲染后必须把焦点还给同一行的同一
+        // 复选框，否则键盘用户按 Space 勾选后，下一次 Space/Enter 会误触发标题
+        // 按钮打开详情，而不是取消勾选。
+        let target = null;
+        if (restoredRow) {
+          if (focusSelectKey) {
+            target = [...restoredRow.querySelectorAll('input[data-select-key]')]
+              .find(node => node.dataset.selectKey === focusSelectKey);
+          }
+          if (!target && focusAction) target = restoredRow.querySelector(`[data-action="${focusAction}"]`);
+          if (!target) target = restoredRow.querySelector('.task-title');
+        }
         if (target) target.focus({ preventScroll: true });
       }
     }
@@ -396,7 +453,7 @@
     empty.hidden = shown.length > 0 || !state.ready || !$('#list-error').hidden;
     const searching = Boolean(state.query.trim());
     const filtered = searching || (library ? state.mediaFilter !== 'all' || state.platformFilter !== 'all' : state.view === 'tasks' && state.filter !== 'all');
-    const scopeCount = library ? counts.completed : state.view === 'tasks' ? counts.unfinished : jobs.length;
+    const scopeCount = library ? (state.library.total || matched.length) : state.view === 'tasks' ? counts.unfinished : jobs.length;
     state.emptyAction = filtered ? 'reset' : state.view === 'tasks' && counts.completed ? 'completed' : 'add';
     empty.querySelector('h3').textContent = filtered ? library ? '没有找到匹配的内容' : '没有匹配的未完成任务' : library ? '还没有下载完成的内容' : state.view === 'tasks' ? '暂无未完成任务' : '从一条喜欢的链接开始';
     empty.querySelector('p').textContent = filtered ? '试试其他关键词，或清除筛选查看当前页面的全部结果。' : library ? '成功下载的内容会自动出现在这里；部分完成的任务仍在“下载任务”中。' : state.view === 'tasks' ? counts.completed ? '下载好的内容已经收纳到“已完成”。' : '添加分享链接后，可以在这里查看进度和处理下载问题。' : '粘贴上方分享链接，下载任务会出现在这里。';
@@ -406,10 +463,15 @@
       illustration.src = filtered || listState !== 'empty-first' ? '/static/media/empty-result.webp' : '/static/media/empty-first.webp';
       illustration.alt = '';
     }
-    $('#task-summary').textContent = !state.ready ? '暂时无法读取任务 · 显示最后一次成功读取的内容'
+    $('#task-summary').textContent = !state.ready
+      ? (state.everLoaded ? '暂时无法读取任务 · 显示最后一次成功读取的内容' : '暂时无法读取任务')
       : state.view === 'home' ? `最近 ${shown.length} 个任务 · ${counts.unfinished} 个未完成 · ${counts.completed} 个已完成`
-      : `${scopeCount} ${library ? '条已完成记录' : '个未完成任务'}${filtered ? ` · 当前筛选 ${matched.length} ${library ? '条' : '个'}` : ''}`;
-    $('#task-footer-note').textContent = library ? '移除记录不会删除本地文件' : '文件保存在本机 · 不上传';
+      : library ? `已载入 ${matched.length} 条${state.library.total ? ` / 共约 ${state.library.total} 条` : ''}${filtered ? ' · 当前筛选' : ''}`
+      : `${scopeCount} 个未完成任务${filtered ? ` · 当前筛选 ${matched.length} 个` : ''}`;
+    $('#task-footer-note').textContent = library
+      ? `${state.library.indexStatus && state.library.indexStatus !== 'ready' ? '索引重建中 · 显示回退结果 · ' : ''}移除记录不会删除本地文件`
+      : '文件保存在本机 · 不上传';
+    updateLibraryMore();
     // 移动端底部 Tab 同步未完成计数；不依赖侧栏的 #nav-count（窄屏侧栏隐藏）。
     const mobileCount = document.querySelector('.mobile-tabs .count');
     if (mobileCount) mobileCount.textContent = counts.unfinished;
@@ -617,19 +679,27 @@
   // 不引入路由框架，也不改动被测试断言的选择器与接口。
   const UI_STATE_KEY = 'shiying-ui-state-v04';
   const UI_DRAFT_KEY = 'shiying-link-draft-v04';
-  const supportedHost = host => /(^|\.)(douyin|kuaishou|xiaohongshu|bilibili|youtube|weixin|wechat)\.(com|cn|qq\.com)$/.test(host)
-    || host.endsWith('jingxuan.douyin.com') || host === 'v.kuaishou.com' || host === 'b23.tv' || host === 'xhslink.com' || host === 'youtu.be';
+  // 前端白名单需与后端 app/platforms/_identify.py 的域名集合保持一致：
+  // iesdouyin.com / gifshow.com / *.m.chenzhongtech.com / xhslink.cn 都是后端
+  // 能成功建任务的合法域名，漏掉会把它们误标为「无法识别」。
+  const supportedHost = host =>
+    /(^|\.)(douyin|iesdouyin|kuaishou|gifshow|xiaohongshu|xhslink|bilibili|youtube|weixin|wechat)\.(com|cn|qq\.com)$/.test(host)
+    || /^[a-z0-9-]+\.m\.chenzhongtech\.com$/.test(host)
+    || host === 'b23.tv' || host === 'youtu.be';
 
   function updateLinkInsights() {
     const box = $('#link-insights'), invalidBox = $('#link-invalid-list');
     if (!box) return;
     const text = $('#share-input')?.value || '';
-    const links = extractShareLinks(text);
+    // 计数需看到原始出现次数：extractShareLinks 已在源头去重，直接用它会让下面的
+    // 重复检测永远命中不了。tokens 保留重复，links 仅用于「识别到 N 条链接」的展示。
+    const tokens = extractShareLinkTokens(text);
+    const links = [...new Set(tokens)];
     if (!text.trim()) { box.hidden = true; if (invalidBox) invalidBox.hidden = true; return; }
     // 只统计 URL 级问题：不支持的平台与畸形链接。分享文案里的普通中文
     // 片段不是链接，不计入「无法识别」警示，避免贴正常链接时误导用户。
     const uniqueSeen = new Set(), duplicates = [], unsupported = [], malformed = [];
-    for (const link of links) {
+    for (const link of tokens) {
       if (uniqueSeen.has(link)) { duplicates.push(link); continue; }
       uniqueSeen.add(link);
       let host = '';
@@ -692,17 +762,93 @@
     try { searchStatus = await api('/api/search/status'); } catch { searchStatus = null; }
     return searchStatus;
   }
+  // ---- 平台能力三态：以 GET /api/platforms 为准派生标签与状态标识 ----------
+  // 静态 chip 保留为无网络时的兜底；能力数据到达后按 supported/experimental/
+  // unavailable 与 evidence_missing 覆盖标签、提示与角标，不再靠前端写死状态。
+  function capabilityFor(platform, channel = 'default') {
+    const entries = state.platformCapabilities || [];
+    return entries.find(entry => entry.platform === platform && entry.channel === channel)
+      || (channel === 'default' ? null : entries.find(entry => entry.platform === platform && entry.channel === 'default'))
+      || null;
+  }
+  function capabilityBadge(entry, kind = 'download') {
+    if (!entry) return null;
+    const value = entry[kind] || 'unavailable';
+    const name = ['supported', 'experimental', 'unavailable'].includes(value) ? value : 'unavailable';
+    const label = {supported: '支持', experimental: '实验', unavailable: '不可用'}[name];
+    const notes = [];
+    if (entry.evidence_missing) notes.push('证据缺失');
+    if (entry.reason) notes.push(entry.reason);
+    return {state: name, label, title: `${label}${notes.length ? '：' + notes.join('；') : ''}`};
+  }
+  async function loadPlatformCapabilities() {
+    try {
+      const entries = await api('/api/platforms');
+      state.platformCapabilities = Array.isArray(entries) ? entries : [];
+    } catch { state.platformCapabilities = []; }
+    applyPlatformCapabilities();
+  }
+  function applyPlatformCapabilities() {
+    const entries = state.platformCapabilities || [];
+    for (const entry of entries) {
+      if (entry.channel === 'default' && entry.label) platforms[entry.platform] = entry.label;
+    }
+    $$('.platform-row .platform-chip').forEach(chip => {
+      const entry = capabilityFor(chip.dataset.platform);
+      const badge = capabilityBadge(entry);
+      if (!badge) {
+        chip.removeAttribute('data-capability'); chip.removeAttribute('data-capability-label');
+        chip.classList.remove('capability-supported', 'capability-experimental', 'capability-unavailable');
+        if (chip.dataset.baseTitle) chip.title = chip.dataset.baseTitle;
+        chip.removeAttribute('aria-label');
+        return;
+      }
+      if (!chip.dataset.baseTitle) chip.dataset.baseTitle = chip.title;
+      chip.dataset.capability = badge.state;
+      chip.dataset.capabilityLabel = badge.label + (entry.evidence_missing ? ' · 证据缺失' : '');
+      chip.classList.remove('capability-supported', 'capability-experimental', 'capability-unavailable');
+      chip.classList.add(`capability-${badge.state}`);
+      chip.title = `${chip.dataset.baseTitle}（下载${badge.title}）`;
+      chip.setAttribute('aria-label', `${platforms[chip.dataset.platform] || chip.textContent.trim()}：下载${badge.title}`);
+    });
+    const summary = $('.platform-row small');
+    if (summary && entries.length) {
+      const defaults = entries.filter(entry => entry.channel === 'default');
+      const supported = defaults.filter(entry => entry.download === 'supported').length;
+      const experimental = defaults.filter(entry => entry.download === 'experimental').length;
+      const missing = entries.filter(entry => entry.evidence_missing).length;
+      summary.textContent = `已登记 ${defaults.length} 个平台 · 支持 ${supported} · 实验 ${experimental}${missing ? ` · 证据缺失 ${missing}` : ''} · 点击图标打开官网`;
+    }
+    if (searchStatus) renderSearchPlatforms(searchStatus);
+  }
   function renderSearchPlatforms(status) {
     const box = $('#search-platforms'); if (!box) return;
     const available = status?.platforms || [];
     const blocked = status?.unsearchable || {};
     box.innerHTML = [
-      ...available.map(p => `<label class="search-platform"><input type="checkbox" value="${escape(p.value)}" checked><span>${escape(p.label)}</span></label>`),
-      ...Object.entries(blocked).map(([value, info]) => `<label class="search-platform disabled" title="${escape(info.reason || '')}"><input type="checkbox" value="${escape(value)}" disabled><span>${escape(info.label || value)}</span></label>`)
+      ...available.map(p => {
+        const badge = capabilityBadge(capabilityFor(p.value), 'search');
+        const tip = badge ? `搜索能力：${badge.title}${p.reason ? '；' + p.reason : ''}` : (p.reason || '');
+        return `<label class="search-platform"${tip ? ` title="${escape(tip)}"` : ''}><input type="checkbox" value="${escape(p.value)}" checked><span>${escape(p.label)}${badge ? `<small class="capability-tag capability-${badge.state}">${escape(badge.label)}</small>` : ''}</span></label>`;
+      }),
+      ...Object.entries(blocked).map(([value, info]) => {
+        const badge = capabilityBadge(capabilityFor(value), 'search');
+        const tip = badge ? `搜索能力：${badge.title}${info.reason ? '；' + info.reason : ''}` : (info.reason || '');
+        return `<label class="search-platform disabled" title="${escape(tip)}"><input type="checkbox" value="${escape(value)}" disabled><span>${escape(info.label || value)}${badge ? `<small class="capability-tag capability-${badge.state}">${escape(badge.label)}</small>` : ''}</span></label>`;
+      })
     ].join('');
   }
   function selectedSearchPlatforms() {
     return [...document.querySelectorAll('#search-platforms input[type="checkbox"]:checked:not(:disabled)')].map(input => input.value);
+  }
+  function updateSearchLimitHint() {
+    const hint = $('#search-limit-hint'); if (!hint) return;
+    const limit = Number($('#search-limit')?.value || 10);
+    const count = selectedSearchPlatforms().length;
+    const total = Math.min(limit * count, SEARCH_TOTAL_CAP);
+    hint.textContent = count
+      ? `已选 ${count} 个平台 × 每平台 ${limit} 条，合计最多 ${total} 条（多平台总计上限 ${SEARCH_TOTAL_CAP} 条）。`
+      : `多平台合计最多返回 ${SEARCH_TOTAL_CAP} 条。`;
   }
   async function openSearch() {
     const dialog = $('#search-dialog'); if (!dialog) return;
@@ -719,12 +865,19 @@
     dialog.showModal();
     const status = await loadSearchStatus(true);
     renderSearchPlatforms(status);
+    updateSearchLimitHint();
     if (status) {
       note.hidden = false;
-      note.textContent = status.key_configured
+      // 文案必须和「跳过 AI」的勾选口径一致：只有 AI 已开启且 Key 已配置
+      // 才算就绪。仅看 key_configured 会在关闭 AI 时既勾选跳过 AI、又宣称
+      // AI 已就绪，让用户误判当前搜索模式。
+      const aiReady = Boolean(status.enabled) && Boolean(status.key_configured);
+      note.textContent = aiReady
         ? `AI 已就绪（${status.model}${status.agent_reach?.available ? '；Agent-Reach 已安装' : ''}）`
-        : '未配置 AI Key：将直接使用关键词搜索，可在设置中配置 Agnes 免费 Key';
-      $('#search-no-ai').checked = !status.enabled || !status.key_configured;
+        : status.key_configured
+          ? 'AI 已在设置中关闭：当前使用关键词搜索，可在设置中开启 AI 搜索。'
+          : '未配置 AI Key：将直接使用关键词搜索，可在设置中配置 Agnes 免费 Key';
+      $('#search-no-ai').checked = !aiReady;
     }
   }
   function bindSearchImage() {
@@ -766,6 +919,14 @@
     const button = $('#search-submit');
     state.searchBusy = true; button.disabled = true; button.textContent = '搜索中…';
     $('#search-message').textContent = '';
+    // 每次提交都从空白结果开始：请求失败时若保留上一次的候选，用户会把旧
+    // 结果误认为当前查询的结果（openSearch 打开弹窗时同样是这份重置）。
+    $('#search-results-section').hidden = true;
+    $('#search-results').innerHTML = '';
+    $('#search-results-meta').textContent = '';
+    $('#search-selected-count').textContent = '0';
+    $('#search-download-selected').disabled = true;
+    state.searchHits = [];
     const requestId = String(Date.now());
     state.searchRequestId = requestId;
     try {
@@ -806,11 +967,11 @@
       const cover = hit.cover_url
         ? `/api/search/thumbnail?platform=${encodeURIComponent(hit.platform)}&url=${encodeURIComponent(hit.cover_url)}`
         : '';
-      const meta = [label, hit.author, hit.duration_seconds ? formatSearchDuration(hit.duration_seconds) : ''].filter(Boolean).map(escape).join(' · ');
+      const meta = [label, hit.author, hit.duration_seconds ? formatSearchDuration(hit.duration_seconds) : ''].filter(Boolean).map(escapeDisplay).join(' · ');
       return `<label class="preview-item search-item">
         <input type="checkbox" value="${index}" checked>
         <span class="search-thumb"><span class="media-placeholder"><svg><use href="#i-film"/></svg></span>${cover ? `<img src="${escape(cover)}" alt="" loading="lazy" onload="window._onSearchCoverLoad&&window._onSearchCoverLoad(this)" onerror="window._onSearchCoverError&&window._onSearchCoverError(this)">` : ''}</span>
-        <span class="search-item-body"><strong>${escape(hit.title || '未命名作品')}</strong><small>${meta}</small></span>
+        <span class="search-item-body"><strong>${escapeDisplay(hit.title || '未命名作品')}</strong><small>${meta}</small></span>
       </label>`;
     }).join('');
     $('#search-results').hidden = state.searchHits.length === 0;
@@ -845,7 +1006,7 @@
       try {
         const existing = await api('/api/jobs/exists?url=' + encodeURIComponent(hit.source_url));
         if (existing && existing.exists) { skipped += 1; continue; }
-        await api('/api/jobs', 'POST', { url: hit.source_url, auto_start: true });
+        await createJobWithConfirm({ url: hit.source_url, auto_start: true });
         created += 1;
       } catch (error) {
         failed += 1;
@@ -885,20 +1046,24 @@
   async function loginSearchPlatform(platform) {
     const labels = { douyin: '抖音', kuaishou: '快手', xiaohongshu: '小红书' };
     const stateEl = $('#search-cookie-state');
-    const buttons = [...document.querySelectorAll('[data-search-login]')];
-    buttons.forEach(button => { button.disabled = true; });
-    if (stateEl) stateEl.textContent = `等待${labels[platform] || platform}登录…（在弹出窗口扫码，最长 5 分钟）`;
+    // 只禁用被点击的渠道：一个渠道挂起时其他平台仍可登录。
+    const button = [...document.querySelectorAll('[data-search-login]')]
+      .find(node => node.dataset.searchLogin === platform);
+    if (button) button.disabled = true;
+    let failed = false;
+    if (stateEl) stateEl.textContent = `等待${labels[platform] || platform}登录…（在弹出窗口扫码；关闭窗口可取消，最长 5 分钟）`;
     try {
       await api(`/api/search/login/${encodeURIComponent(platform)}`, 'POST', {}, { timeoutMs: LOGIN_TIMEOUT_MS });
       toast(`${labels[platform] || platform}登录态已保存`);
-      searchStatus = null;
-      const status = await loadSearchStatus(true);
-      if (status) renderSearchCookieState(status.cookies || {}, status.login || {});
     } catch (error) {
+      failed = true;
       if (stateEl) stateEl.textContent = localize(error.message);
       toast(localize(error.message), true);
     } finally {
-      buttons.forEach(button => { button.disabled = false; });
+      if (button) button.disabled = false;
+      searchStatus = null;
+      const status = await loadSearchStatus(true);
+      if (status && !failed) renderSearchCookieState(status.cookies || {}, status.login || {});
     }
   }
   async function importSearchCookies() {
@@ -918,6 +1083,12 @@
     } catch (error) {
       if (stateEl) stateEl.textContent = localize(error.message);
       toast(localize(error.message), true);
+      // 导入失败也要刷新状态，避免旧文案让用户误以为登录渠道不可用。
+      // loadSearchStatus 只更新缓存变量，必须同步重绘 DOM 才能把错误文案
+      // 换回各平台真实登录状态；错误本身已由上面的 toast 告知用户。
+      searchStatus = null;
+      const status = await loadSearchStatus(true);
+      if (status) renderSearchCookieState(status.cookies || {}, status.login || {});
     } finally {
       button.disabled = false; button.textContent = previous;
     }
@@ -944,12 +1115,15 @@
     } catch { /* 损坏的本地状态不影响首屏，按默认工作台启动 */ }
   }
 
+  function composerIsCollapsed() {
+    // undefined 表示用户还没点过按钮：首次使用保留完整引导，已有任务时默认收起。
+    // 一旦用户显式选择，就以选择为准——包括空任务态，否则「收起引导」无效。
+    return state.composerCollapsed === undefined ? state.jobs.size > 0 : Boolean(state.composerCollapsed);
+  }
   function updateComposerCompact() {
     const composer = $('#composer'), toggle = $('#composer-toggle');
     if (!composer || state.view !== 'home') return;
-    const hasJobs = state.jobs.size > 0;
-    // 首次使用保留完整引导；已有任务时收起，让进度上移。用户可手动展开。
-    const collapsed = hasJobs && !state.composerPinnedOpen;
+    const collapsed = composerIsCollapsed();
     composer.classList.toggle('compact', collapsed);
     if (toggle) {
       toggle.textContent = collapsed ? '展开引导' : '收起引导';
@@ -958,6 +1132,7 @@
   }
 
   function view(name, filter) {
+    const previousView = state.view;
     state.queries[state.view] = state.query;
     state.view = ['home','tasks','completed'].includes(name) ? name : 'home';
     state.query = state.queries[state.view]; $('#task-search').value = state.query;
@@ -978,6 +1153,8 @@
     updateComposerCompact();
     persistUiState();
     render();
+    // 进入资料库走分页首页；离开时恢复完整任务表，避免其它视图看到半页数据。
+    if (state.everLoaded && previousView !== state.view && (previousView === 'completed' || state.view === 'completed')) refresh();
   }
   function manageCompleted(enabled) {
     state.manageCompleted = Boolean(enabled); state.selectedCompleted.clear(); render();
@@ -990,18 +1167,144 @@
       $('#completed-platform').value = 'all';
     }
     state.selectedCompleted.clear(); render();
+    if (state.view === 'completed') scheduleLibraryReload();
   }
   function addDownload() { view('home'); $('#share-input').focus(); }
-  async function refresh() {
+
+  // ---- 资料库：走后端 GET /api/jobs?view=library 的游标分页 ----------------
+  // 后端 LibraryItem 只有汇总字段，没有 items/revision/source_url（app/models.py）。
+  // 这里补成现有任务行/详情能复用的任务对象；真实文件明细在打开详情时再按需取。
+  function libraryJob(item) {
+    return {
+      id: item.id,
+      title: item.title || item.id,
+      platform: item.platform,
+      author: item.author || undefined,
+      status: item.status,
+      created_at: item.created_at,
+      revision: 0,
+      items: [{
+        id: `${item.id}-library`,
+        title: item.title || item.id,
+        media_type: item.media_type || 'unknown',
+        status: 'completed',
+        output_paths: [],
+      }],
+      output_dir: item.output_dir,
+      total_items: item.total_items,
+      completed_items: item.completed_items,
+      failed_items: item.failed_items,
+      total_bytes: item.total_bytes,
+      missing_files: item.missing_files,
+      cover_url: item.cover_url,
+      libraryEntry: true,
+    };
+  }
+  function libraryQueryParts(cursor) {
+    const parts = ['view=library', `limit=${LIBRARY_PAGE_SIZE}`, `q=${encodeURIComponent(state.query)}`];
+    if (state.platformFilter !== 'all' && state.platformFilter !== 'other') parts.push(`platform=${encodeURIComponent(state.platformFilter)}`);
+    if (LIBRARY_BACKEND_MEDIA.has(state.mediaFilter)) parts.push(`media_type=${encodeURIComponent(state.mediaFilter)}`);
+    if (LIBRARY_BACKEND_SORTS[state.sortOrder]) parts.push(`sort=${LIBRARY_BACKEND_SORTS[state.sortOrder]}`);
+    if (cursor) parts.push(`cursor=${encodeURIComponent(cursor)}`);
+    return parts;
+  }
+  async function loadLibrary(reset = false) {
+    const lib = state.library;
+    if (lib.loading) {
+      if (!reset) return;
+      lib.requestId += 1; // 让在途的续页响应作废，本次重置优先
+      lib.loading = false;
+    }
+    if (!reset && (lib.exhausted || !lib.nextCursor)) return;
+    const requestId = ++lib.requestId;
+    lib.loading = true;
+    updateLibraryMore();
+    try {
+      const parts = libraryQueryParts(reset ? null : lib.nextCursor);
+      const page = await api(`/api/jobs?${parts.join('&')}`);
+      if (requestId !== lib.requestId) return; // 过期响应（筛选已变更）直接丢弃
+      const items = Array.isArray(page?.items) ? page.items : [];
+      if (reset) { lib.order = []; lib.wechatKeys = []; lib.exhausted = false; }
+      const seen = new Set(lib.order);
+      for (const item of items) {
+        const key = put(libraryJob(item));
+        if (!seen.has(key)) { lib.order.push(key); seen.add(key); }
+      }
+      lib.indexStatus = page?.index_status || 'fallback';
+      lib.total = Number(page?.total_estimate) || 0;
+      lib.nextCursor = page?.next_cursor || null;
+      lib.exhausted = !lib.nextCursor;
+      if (reset) {
+        // 微信记录存放在 data/wechat-jobs.json，不进索引；单独补齐（无分页端点）。
+        try {
+          const wechat = await api('/api/wechat/jobs');
+          lib.wechatKeys = (Array.isArray(wechat) ? wechat : [])
+            .filter(job => job.status === 'completed')
+            .map(job => put(job, true));
+        } catch { lib.wechatKeys = []; }
+      }
+    } finally {
+      if (requestId === lib.requestId) { lib.loading = false; updateLibraryMore(); }
+    }
+  }
+  function scheduleLibraryReload() {
+    if (state.view !== 'completed') return;
+    const setTimer = typeof setTimeout !== 'undefined' ? setTimeout : window?.setTimeout;
+    const clearTimer = typeof clearTimeout !== 'undefined' ? clearTimeout : window?.clearTimeout;
+    if (!setTimer) { loadLibrary(true); return; }
+    if (libraryReloadTimer && clearTimer) clearTimer(libraryReloadTimer);
+    libraryReloadTimer = setTimer(() => { libraryReloadTimer = null; loadLibrary(true); }, 250);
+  }
+  function libraryEntries() {
+    const keys = [...new Set([...state.library.order, ...state.library.wechatKeys])];
+    return keys.map(key => [key, state.jobs.get(key)]).filter(([, job]) => job);
+  }
+  function updateLibraryMore() {
+    const wrap = $('#library-more'); if (!wrap) return;
+    const lib = state.library;
+    const hasMore = Boolean(lib.nextCursor) && !lib.exhausted;
+    wrap.hidden = state.view !== 'completed' || (!hasMore && !lib.loading);
+    const button = $('#load-more');
+    if (button) { button.hidden = !hasMore; button.disabled = lib.loading; }
+    const status = $('#library-more-status');
+    if (status) status.textContent = lib.loading ? '正在读取…'
+      : hasMore ? `已载入 ${lib.order.length + lib.wechatKeys.length} 条，可继续加载`
+      : '';
+    const sentinel = $('#library-sentinel');
+    if (sentinel) sentinel.hidden = !hasMore || state.view !== 'completed';
+  }
+  function ensureLibraryObserver() {
+    if (libraryObserver || typeof IntersectionObserver === 'undefined') return;
+    const sentinel = $('#library-sentinel'); if (!sentinel) return;
+    libraryObserver = new IntersectionObserver(entries => {
+      if (entries.some(entry => entry.isIntersecting) && state.view === 'completed' && !state.versionBlocked) loadLibrary(false);
+    }, {rootMargin: '240px'});
+    libraryObserver.observe(sentinel);
+  }
+
+  async function refresh(options = {}) {
     if (state.refreshing) return;
     state.refreshing = true;
     const previousKeys = [...state.jobs.keys()];
     try {
       const health = await api('/api/health');
-      if (health.app_id !== document.querySelector('meta[name=app-id]').content || health.build_id !== document.querySelector('meta[name=app-build]').content || health.restart_required) throw new Error('程序已更新，请先停止服务，再重新启动拾影。');
-      const [jobs, wechatJobs] = await Promise.all([api('/api/jobs'), api('/api/wechat/jobs')]);
-      const present = new Set([...jobs.map(j => `j:${j.id}`), ...wechatJobs.map(j => `w:${j.id}`)]);
-      previousKeys.forEach(key => { if (!present.has(key)) state.jobs.delete(key); });
+      // 版本错位时进入「阻断」态：刷新循环仍会重试以便服务重启后自动恢复，
+      // 但在此之前 SSE 事件与批量操作都必须停手，否则会出现「已断连」却仍在
+      // 实时更新数据、仍能移除记录的自相矛盾界面。
+      state.versionBlocked = health.app_id !== document.querySelector('meta[name=app-id]').content
+        || health.build_id !== document.querySelector('meta[name=app-build]').content
+        || Boolean(health.restart_required);
+      if (state.versionBlocked) throw new Error('程序已更新，请先停止服务，再重新启动拾影。');
+      let jobs = [], wechatJobs = [];
+      if (state.view === 'completed') {
+        // 资料库只按游标取当前页，不再一次性读取全部任务。周期/SSE 刷新带
+        // keepLibrary，保留用户已经翻到的页与筛选结果；显式刷新才重置到第一页。
+        if (!options.keepLibrary) await loadLibrary(true);
+      } else {
+        [jobs, wechatJobs] = await Promise.all([api('/api/jobs'), api('/api/wechat/jobs')]);
+        const present = new Set([...jobs.map(j => `j:${j.id}`), ...wechatJobs.map(j => `w:${j.id}`)]);
+        previousKeys.forEach(key => { if (!present.has(key)) state.jobs.delete(key); });
+      }
       jobs.forEach(j => put(j)); wechatJobs.forEach(j => put(j,true));
       if (!state.config) {
         state.config = await api('/api/config');
@@ -1010,6 +1313,7 @@
       state.recovery = health.recovery || null;
       state.everLoaded = true;
       state.refreshSettled = true;
+      state.versionBlocked = false;
       connection(true);
       // 恢复成功时把离线面板文案复位，避免下次断连残留上一次的具体错误。
       const offlineCopy = document.querySelector('#offline-panel p');
@@ -1026,19 +1330,65 @@
       // 三种互相矛盾的提示堆在页面上（UI 审计 :94-104 的已复现缺陷）。
       // 配置损坏的恢复提示仍走 #list-error，独立可见，不被离线面板吞掉。
       connection(false);
+      // 版本阻断在配置读取之前抛错，但 /api/config 通常仍可访问（实测为 200）。
+      // 补取一次让「保存至」显示真实目录，而不是长期停在「读取中…」；网络故障
+      // 下该请求同样失败，静默保留占位文案即可。
+      if (state.versionBlocked && !state.config) {
+        try {
+          const config = await api('/api/config');
+          state.config = config;
+          $('#save-path').textContent = config.download_dir;
+          $('#save-path').title = config.download_dir;
+        } catch {}
+      }
       const detail = localize(error.message) || '无法连接本机服务，请重新打开拾影。';
       const offlineCopy = document.querySelector('#offline-panel p');
-      if (offlineCopy) offlineCopy.textContent = `${detail} 已显示最后一次成功读取的内容。`;
+      if (offlineCopy) offlineCopy.textContent = state.everLoaded
+        ? `${detail} 已显示最后一次成功读取的内容。`
+        : detail;
       if (!state.recovery?.message) $('#list-error').hidden = true;
       state.refreshSettled = true;
       render();
     } finally { state.refreshing = false; }
   }
-  function extractShareLinks(text) {
+  // 提取 URL 并清理尾部标点，保留重复出现；提交等场景仍需去重时用 extractShareLinks。
+  function extractShareLinkTokens(text) {
     const matches = String(text || '').match(/https?:\/\/[^\s<>"']+/gi) || [];
-    return [...new Set(matches.map(value => value.replace(/[).,;!?\]}。，；！？】）]+$/u, '')).filter(Boolean))];
+    return matches.map(value => value.replace(/[).,;!?\]}。，；！？】）]+$/u, '')).filter(Boolean);
   }
-  async function submitLinks(links, create) {
+  function extractShareLinks(text) {
+    return [...new Set(extractShareLinkTokens(text))];
+  }
+  // POST /api/jobs 会把 paste_text 里的非链接行计入 ignored_text_count。
+  // 一链接一请求时每个请求都带完整原文（仅统计用，创建仍用干净的 url）；只带
+  // 链接所在行会漏掉独立成行的推荐文案，导致「已忽略 N 行」少算。后端不会从
+  // paste_text 创建任务，所以多链接也不会因此多建任务。
+  function pasteStatsText(text) {
+    // 与后端 CreateJobRequest.paste_text 上限、输入框 maxlength 对齐。
+    return String(text || '').slice(0, 32768);
+  }
+  function collectPasteStats(response, totals) {
+    if (!response || typeof response !== 'object') return;
+    // 每个请求都带同一份原文，后端回报的是同一份总数；求和会按链接数重复计，
+    // 取最大值才是本次粘贴实际被忽略的行数。
+    totals.ignored = Math.max(totals.ignored, Math.max(0, Number(response.ignored_text_count) || 0));
+    if (Array.isArray(response.unrecognized_samples)) totals.unrecognized.push(...response.unrecognized_samples.filter(Boolean));
+    if (Array.isArray(response.duplicates)) totals.duplicates.push(...response.duplicates.filter(Boolean));
+  }
+  function renderPasteStats(totals) {
+    const box = $('#paste-stats'); if (!box) return;
+    const ignored = Math.max(0, Number(totals.ignored) || 0);
+    const unrecognized = [...new Set(totals.unrecognized)];
+    const duplicates = [...new Set(totals.duplicates)];
+    if (!ignored && !unrecognized.length && !duplicates.length) { box.hidden = true; box.innerHTML = ''; return; }
+    const parts = [];
+    if (ignored) parts.push(`已忽略 <strong>${ignored}</strong> 行非链接文本`);
+    if (unrecognized.length) parts.push(`<span class="paste-warn">无法识别：${escape(unrecognized.slice(0, 3).join(' · '))}${unrecognized.length > 3 ? ' …' : ''}</span>`);
+    if (duplicates.length) parts.push(`重复：${escape(duplicates.slice(0, 3).join(' · '))}${duplicates.length > 3 ? ' …' : ''}`);
+    box.innerHTML = parts.join('');
+    box.hidden = false;
+  }
+  async function submitLinks(links, create, onStats) {
     const accepted = [], rejected = [], unconfirmed = [];
     for (let index = 0; index < links.length; index++) {
       const url = links[index];
@@ -1048,7 +1398,8 @@
           error.httpStatus = 422;
           throw error;
         }
-        await create(url);
+        const response = await create(url);
+        if (onStats) onStats(response);
         accepted.push(url);
       } catch (error) {
         if (error && Number.isInteger(error.httpStatus) && error.httpStatus >= 400 && error.httpStatus < 500 && error.httpStatus !== 408) {
@@ -1068,19 +1419,26 @@
     // 批量提交可能耗时数分钟：只有输入框内容仍是提交时的原文时才回填，
     // 避免覆盖用户在等待期间粘贴的下一批链接。
     const submittedText = $('#share-input').value;
+    const pasteStats = {ignored: 0, unrecognized: [], duplicates: []};
+    renderPasteStats(pasteStats);
     try {
       const result = await submitLinks(links, async url => {
         let host;
         try { host = new URL(url).hostname; }
         catch { const error = new Error('链接格式无效。'); error.httpStatus = 422; throw error; }
-        const job = await api('/api/jobs', 'POST', {url}); put(job);
-      });
+        const response = await createJobWithConfirm({url, paste_text: pasteStatsText(submittedText)});
+        // 统计字段属于本次粘贴，不是任务本身，别混进 state.jobs 的任务对象。
+        const job = { ...(response || {}) };
+        delete job.ignored_text_count; delete job.unrecognized_samples; delete job.duplicates;
+        put(job);
+        return response;
+      }, response => collectPasteStats(response, pasteStats));
       const inputEdited = $('#share-input').value !== submittedText;
       const remainder = [...result.rejected.map(item => item.url), ...result.unconfirmed].join('\n');
       if (!inputEdited) {
         $('#share-input').value = remainder;
       }
-      state.filter = 'all'; render();
+      state.filter = 'all'; render(); renderPasteStats(pasteStats);
       if (result.accepted.length) toast(`已添加 ${result.accepted.length} 个下载任务`);
       const notices = result.rejected.map(item => `${item.url}：${localize(item.message)}`);
       if (result.unconfirmed.length) notices.push('连接中断，剩余链接未全部确认。请先刷新任务列表，核对后再提交。');
@@ -1142,7 +1500,11 @@
     const key = button.closest('[data-key]').dataset.key, job = state.jobs.get(key); if (!job) return;
     const action = button.dataset.action;
     button.closest('.task-more')?.removeAttribute('open');
-    if (action === 'detail') { state.detailId = key; renderDetails(); $('#details-dialog').showModal(); return; }
+    if (action === 'detail') {
+      // 资料库行只有索引汇总字段；打开详情时按需取完整任务，保留文件明细与原链接。
+      if (job.libraryEntry) { try { put(await api(`/api/jobs/${encodeURIComponent(job.id)}`)); } catch {} }
+      state.detailId = key; renderDetails(); $('#details-dialog').showModal(); return;
+    }
     if (action === 'remove') { requestRemoval([key]); return; }
     if (action === 'open-file') {
       const output = taskViews.files(job);
@@ -1181,7 +1543,7 @@
         if (recreate) {
           // Every retry now goes through the unified queue, including old
           // WeChat records created before the legacy pool was retired.
-          const fresh = await api('/api/jobs', 'POST', {url: job.source_url, force: true});
+          const fresh = await createJobWithConfirm({url: job.source_url});
           put(fresh); toast('已按当前设置创建新任务');
         } else {
           const updated = await api(`/api/jobs/${job.id}/retry`, 'POST', {});
@@ -1261,9 +1623,17 @@
         $('#ai-search-key').value = '';
         $('#ai-search-key-state').textContent = search.key_configured ? '已配置（DPAPI 加密保存，不回显）' : '未配置：AI 搜索将退化为直接关键词';
         const reach = search.agent_reach || {};
-        $('#agent-reach-state').textContent = reach.available
-          ? 'Agent-Reach 已安装：B站/YouTube/小红书优先走它的渠道'
-          : `Agent-Reach 未安装（可选）：${reach.install_hint || ''}`;
+        const reachLabels = { bilibili: 'B站', youtube: 'YouTube', xiaohongshu: '小红书' };
+        const reachChannels = reach.channels || {};
+        const reachReady = (reach.ready_channels || []).map(channel => reachLabels[channel] || channel);
+        const reachMissing = Object.keys(reachLabels).filter(
+          channel => reachChannels[channel] && !['ready', 'verified', 'unverified'].includes(reachChannels[channel].status)
+        );
+        $('#agent-reach-state').textContent = !reach.available
+          ? `${reach.executable ? 'Agent-Reach 渠道未就绪' : 'Agent-Reach 未安装'}（可选）：${reach.install_hint || ''}`
+          : reachMissing.length
+            ? `Agent-Reach 已安装：${reachReady.join('/') || '暂无'}可用；${reachMissing.map(channel => reachLabels[channel]).join('/')}渠道未就绪，将回退内置搜索。${reach.install_hint || ''}`
+            : `Agent-Reach 已安装：${reachReady.join('/')}优先走它的渠道`;
         renderSearchCookieState(search.cookies || {}, search.login || {});
       }
       const problems = environment?.checks?.filter(check => !check.ok) || [];
@@ -1277,6 +1647,10 @@
     event.preventDefault(); const button = $('#save-settings'); button.disabled = true; $('#settings-message').textContent = '';
     try {
       state.config = await api('/api/config','PUT',{
+        // 设置弹窗只展示部分字段；PUT 是整体验收，必须把已加载的其余字段
+        // （index_enabled / capabilities_path 等）原样回传，否则会被后端
+        // 按模型默认值静默重置，用户的索引与能力配置会丢失。
+        ...state.config,
         download_dir:$('#directory').value.trim(),
         use_chrome_cookies:$('#use-cookies').checked,
         chrome_profile:$('#profile').value.trim() || null,
@@ -1313,24 +1687,27 @@
     $$('.nav-button[data-view]').forEach(b => b.addEventListener('click',() => view(b.dataset.view)));
     $('.brand').addEventListener('click',e => { e.preventDefault(); view('home'); });
     $$('[data-filter]').forEach(b => b.addEventListener('click',() => { if (state.view === 'tasks') { state.filter = b.dataset.filter; render(); } }));
-    $$('[data-media-filter]').forEach(b => b.addEventListener('click',() => { if (state.view === 'completed') { state.mediaFilter = b.dataset.mediaFilter; state.selectedCompleted.clear(); render(); } }));
+    $$('[data-media-filter]').forEach(b => b.addEventListener('click',() => { if (state.view === 'completed') { state.mediaFilter = b.dataset.mediaFilter; state.selectedCompleted.clear(); render(); scheduleLibraryReload(); } }));
     $$('[data-add-download]').forEach(b => b.addEventListener('click', addDownload));
-    $('#completed-platform').addEventListener('change', event => { state.platformFilter = event.target.value; state.selectedCompleted.clear(); render(); });
-    $('#completed-sort').addEventListener('change', event => { state.sortOrder = event.target.value; render(); });
-    $('#manage-completed').addEventListener('click', () => manageCompleted(!state.manageCompleted));
+    $('#completed-platform').addEventListener('change', event => { state.platformFilter = event.target.value; state.selectedCompleted.clear(); render(); scheduleLibraryReload(); });
+    $('#completed-sort').addEventListener('change', event => { state.sortOrder = event.target.value; render(); scheduleLibraryReload(); });
+    $('#load-more')?.addEventListener('click', () => loadLibrary(false));
+    $('#manage-completed').addEventListener('click', () => { if (state.versionBlocked) return; manageCompleted(!state.manageCompleted); });
     $('#exit-management').addEventListener('click', () => manageCompleted(false));
     $('#task-list').addEventListener('change', event => {
+      if (state.versionBlocked) return;
       const key = event.target.dataset.selectKey;
       if (!state.manageCompleted || !state.visibleCompleted.includes(key)) return;
       if (event.target.checked) state.selectedCompleted.add(key); else state.selectedCompleted.delete(key);
       render();
     });
     $('#select-visible').addEventListener('change', event => {
+      if (state.versionBlocked) return;
       state.selectedCompleted.clear();
       if (event.target.checked) state.visibleCompleted.forEach(key => state.selectedCompleted.add(key));
       render();
     });
-    $('#remove-selected').addEventListener('click', () => requestRemoval([...state.selectedCompleted].filter(key => state.visibleCompleted.includes(key) && state.jobs.get(key)?.status === 'completed')));
+    $('#remove-selected').addEventListener('click', () => { if (state.versionBlocked) return; requestRemoval([...state.selectedCompleted].filter(key => state.visibleCompleted.includes(key) && state.jobs.get(key)?.status === 'completed')); });
     $$('[data-open-settings]').forEach(b => b.addEventListener('click',settings));
     $$('[data-open-folder]').forEach(b => b.addEventListener('click',() => folder(null,b).catch(e => toast(localize(e.message),true))));
     $$('[data-close-dialog]').forEach(b => b.addEventListener('click',() => b.closest('dialog').close()));
@@ -1341,7 +1718,7 @@
     $('#refresh-button').addEventListener('click',refresh); $('#show-all').addEventListener('click',() => view('tasks', 'all'));
     $('#show-completed').addEventListener('click', () => view('completed'));
     $('#confirm-remove').addEventListener('click',confirmRemoval);
-    $('#task-search').addEventListener('input', event => { state.query = event.target.value; state.queries[state.view] = state.query; state.selectedCompleted.clear(); render(); });
+    $('#task-search').addEventListener('input', event => { state.query = event.target.value; state.queries[state.view] = state.query; state.selectedCompleted.clear(); render(); scheduleLibraryReload(); });
     $('#duplicate-skip').addEventListener('click', () => {
       const pending = state.pendingSubmit; state.pendingSubmit = null;
       $('#duplicate-dialog').close();
@@ -1375,6 +1752,8 @@
     if ($('#full-exit')) $('#full-exit').addEventListener('click', fullExit);
     if ($('#preview-button')) $('#preview-button').addEventListener('click', openPreview);
     $('#ai-search-button')?.addEventListener('click', openSearch);
+    $('#search-limit')?.addEventListener('change', updateSearchLimitHint);
+    $('#search-platforms')?.addEventListener('change', updateSearchLimitHint);
     $('#search-submit')?.addEventListener('click', submitSearch);
     $('#search-select-all')?.addEventListener('click', () => setSearchSelection(true));
     $('#search-unselect-all')?.addEventListener('click', () => setSearchSelection(false));
@@ -1401,10 +1780,10 @@
         event.preventDefault(); setFormMessage('文案超过输入框容量，请分批粘贴。');
       }
     });
-    document.addEventListener('visibilitychange',() => { if (!document.hidden) refresh(); });
+    document.addEventListener('visibilitychange',() => { if (!document.hidden) refresh({keepLibrary: true}); });
     // 影像档案层事件：全部使用可选链，缺节点时静默降级，不影响旧界面路径。
     $('#composer-toggle')?.addEventListener('click', () => {
-      state.composerPinnedOpen = !state.composerPinnedOpen;
+      state.composerCollapsed = !composerIsCollapsed();
       updateComposerCompact();
     });
     $('#offline-retry')?.addEventListener('click', () => refresh());
@@ -1487,7 +1866,7 @@
     btn.disabled = true;
     $('#preview-message').textContent = '正在创建任务并按所选范围下载…';
     try {
-      const job = await api('/api/jobs', 'POST', {url: previewData.url, auto_start: false});
+      const job = await createJobWithConfirm({url: previewData.url, auto_start: false});
       put(job);
       const started = await api(`/api/jobs/${job.id}/start`, 'POST', {item_ids});
       put(started);
@@ -1522,7 +1901,7 @@
   }
 
   async function initialize() {
-    bind(); try { document.documentElement.dataset.theme = localStorage.getItem('shiying-theme') || 'light'; } catch {}
+    bind(); ensureLibraryObserver(); try { document.documentElement.dataset.theme = localStorage.getItem('shiying-theme') || 'light'; } catch {}
     syncThemeIcon();
     restoreUiState();
     // 恢复筛选控件的值与内部 state 对齐，避免「视图回到资料库但下拉仍是全部」。
@@ -1531,6 +1910,7 @@
     if ($('#completed-sort')) $('#completed-sort').value = state.sortOrder;
     view(state.view);
     updateLinkInsights();
+    loadPlatformCapabilities();
     await refresh();
     loadCache();
     if (state.ready) {
@@ -1541,17 +1921,47 @@
       } catch { toast('暂时无法检查运行环境，请在设置中重试。', true); }
     }
     if (state.recovery && state.recovery.message) toast(state.recovery.message, true);
-    state.eventSource = new EventSource('/api/events');
-    state.eventSource.addEventListener('job',event => { try { put(JSON.parse(event.data)); render(); } catch {} });
-    // SSE 健康时实时事件已覆盖更新，轮询仅作低频兜底；连接异常时恢复快速轮询。
-    state.eventSource.onopen = () => { state.sseUp = true; refresh(); };
-    state.eventSource.onerror = () => { state.sseUp = false; if (!document.hidden) refresh(); };
+    function connectEvents() {
+      // 重连时携带本地最大 revision：服务端先推 snapshot，再续增量，避免丢事件。
+      const since = Number.isFinite(state.maxRevision) ? state.maxRevision : null;
+      const url = since == null ? '/api/events' : `/api/events?since=${encodeURIComponent(since)}`;
+      if (state.eventSource) state.eventSource.close();
+      state.eventSource = new EventSource(url);
+      state.eventSource.addEventListener('job', event => {
+        if (state.versionBlocked) return;
+        try {
+          const job = JSON.parse(event.data);
+          state.maxRevision = Math.max(state.maxRevision || 0, job.revision || 0);
+          put(job); render();
+        } catch {}
+      });
+      state.eventSource.addEventListener('snapshot', event => {
+        if (state.versionBlocked) return;
+        try {
+          const data = JSON.parse(event.data);
+          (data.jobs || []).forEach(job => {
+            state.maxRevision = Math.max(state.maxRevision || 0, job.revision || 0);
+            put(job);
+          });
+          render();
+        } catch {}
+      });
+      // SSE 健康时实时事件已覆盖更新，轮询仅作低频兜底；连接异常时恢复快速轮询。
+      state.eventSource.onopen = () => { state.sseUp = true; if (!state.versionBlocked) refresh({keepLibrary: true}); };
+      state.eventSource.onerror = () => {
+        state.sseUp = false;
+        if (!document.hidden) refresh({keepLibrary: true});
+        state.eventSource?.close();
+        window.setTimeout(connectEvents, 3000);
+      };
+    }
+    connectEvents();
     let pollTick = 0;
     window.setInterval(() => {
       if (document.hidden) return;
       pollTick += 1;
       if (state.sseUp && pollTick % 8 !== 0) return;
-      refresh();
+      refresh({keepLibrary: true});
     },4000);
     window.addEventListener('beforeunload',() => state.eventSource?.close());
   }

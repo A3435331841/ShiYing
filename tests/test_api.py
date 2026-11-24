@@ -721,6 +721,39 @@ def test_public_xiaohongshu_urls_redact_xsec_token_but_keep_internal_url(
     assert "xsec_token" not in response["url"]
 
 
+def test_public_job_strips_signed_wechat_cover_url(tmp_path) -> None:
+    signed_cover = (
+        "https://finder.video.qq.com/251/20304/stodownload"
+        "?encfilekey=SECRET_KEY&token=SECRET_TOKEN&hy=SZ&idx=1"
+    )
+    job = DownloadJob(
+        id="public-wechat-signed-cover",
+        source_url="https://channels.weixin.qq.com/s/abc",
+        platform=Platform.WECHAT,
+        source_kind=SourceKind.ITEM,
+        output_root=str(tmp_path),
+        status=JobStatus.COMPLETED,
+        items=[
+            DownloadItem(
+                id="wechat-item",
+                source_url="https://channels.weixin.qq.com/s/abc",
+                metadata={"cover_url": signed_cover, "other": "keep"},
+            )
+        ],
+    )
+
+    public = main_module._public_job(job)
+
+    assert (
+        public.items[0].metadata["cover_url"]
+        == "https://finder.video.qq.com/251/20304/stodownload"
+    )
+    assert public.items[0].metadata["other"] == "keep"
+    assert "SECRET_KEY" not in public.model_dump_json()
+    assert "SECRET_TOKEN" not in public.model_dump_json()
+    assert job.items[0].metadata["cover_url"] == signed_cover
+
+
 def test_jobs_endpoint_never_serializes_douyin_direct_candidate_urls(
     monkeypatch, tmp_path
 ) -> None:

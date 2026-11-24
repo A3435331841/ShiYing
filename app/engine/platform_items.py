@@ -617,7 +617,7 @@ class PlatformItemsMixin:
         use_browser_cookies = self._xiaohongshu_browser_cookies_enabled()
         note, fallback = parse_xhs_note(
             item.source_url,
-            cookie_profile=self.config.cookie_profile,
+            cookie_profile=self._xiaohongshu_cookie_profile(),
             use_browser_cookies=use_browser_cookies,
             allow_cookie_fallback=self.config.allow_cookie_fallback,
         )

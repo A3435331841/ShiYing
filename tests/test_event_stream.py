@@ -6,7 +6,7 @@ import json
 import pytest
 
 from app import main as main_module
-from app.event_stream import JobEventBuffer
+from app.event_stream import JobEventBuffer, wake_all
 from app.models import DownloadItem, DownloadJob, Platform, SourceKind
 
 
@@ -67,6 +67,25 @@ def test_late_worker_update_cannot_revert_a_previously_delivered_revision() -> N
                 ("first", 11)
             ]
         finally:
+            buffer.close()
+
+    asyncio.run(exercise())
+
+
+def test_wake_all_releases_pending_take_before_its_timeout() -> None:
+    """停机线程必须能唤醒 SSE 的 take()，否则 uvicorn 会先取消生成器。"""
+
+    async def exercise() -> None:
+        buffer = JobEventBuffer()
+        pending = None
+        try:
+            pending = asyncio.create_task(buffer.take(timeout=2))
+            await asyncio.sleep(0)
+            await asyncio.to_thread(wake_all)  # 模拟 _request_process_stop 的停机线程
+            assert await asyncio.wait_for(pending, timeout=0.5) == []
+        finally:
+            if pending is not None and not pending.done():
+                pending.cancel()
             buffer.close()
 
     asyncio.run(exercise())

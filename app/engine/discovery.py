@@ -191,7 +191,7 @@ class DiscoveryMixin:
         if platform == Platform.XIAOHONGSHU and kind == SourceKind.PROFILE:
             profile = discover_xhs_profile(
                 url,
-                cookie_profile=self.config.cookie_profile,
+                cookie_profile=self._xiaohongshu_cookie_profile(),
                 use_browser_cookies=xiaohongshu_browser_cookies,
                 allow_cookie_fallback=self.config.allow_cookie_fallback,
                 should_cancel=should_cancel,
@@ -237,8 +237,8 @@ class DiscoveryMixin:
         if platform in DOUYIN_PLATFORMS and kind == SourceKind.PROFILE:
             profile = discover_douyin_profile(
                 url,
-                cookie_profile=self.config.cookie_profile,
-                use_browser_cookies=self.config.cookie_browser == "chrome",
+                cookie_profile=self._douyin_cookie_profile(),
+                use_browser_cookies=self._douyin_browser_cookies_enabled(),
                 allow_cookie_fallback=self.config.allow_cookie_fallback,
                 should_cancel=should_cancel,
                 status_callback=self._report_discovery,
@@ -352,7 +352,7 @@ class DiscoveryMixin:
         }:
             note, fallback = parse_xhs_note(
                 url,
-                cookie_profile=self.config.cookie_profile,
+                cookie_profile=self._xiaohongshu_cookie_profile(),
                 use_browser_cookies=xiaohongshu_browser_cookies,
                 allow_cookie_fallback=self.config.allow_cookie_fallback,
             )
@@ -394,8 +394,8 @@ class DiscoveryMixin:
         if self.config.cookie_browser not in {None, "chrome"}:
             raise TemporaryAccessError("Kuaishou supports Chrome Cookie or explicit anonymous access only")
         result = discover_kuaishou(
-            url, cookie_profile=self.config.cookie_profile,
-            use_browser_cookies=self.config.cookie_browser == "chrome",
+            url, cookie_profile=self._kuaishou_cookie_profile(),
+            use_browser_cookies=self._kuaishou_browser_cookies_enabled(),
             should_cancel=should_cancel, status_callback=self._report_discovery,
         )
         items = [DownloadItem(
@@ -573,4 +573,12 @@ class DiscoveryMixin:
         options: dict[str, Any] = {"format": "bestvideo*+bestaudio/best"}
         if platform in DOUYIN_PLATFORMS:
             options["format_sort"] = ["res"]
+        elif platform == Platform.YOUTUBE:
+            # 无上限的 bestvideo*（4K/高码率 DASH）单文件可达数百 MB，批量任务
+            # 时限内根本下不完。限制到 1080p，并保留原选择器作为最终兜底。
+            # 注意：yt-dlp 的 format_sort 只接受 "+字段" 形式，"-res" 会直接报错。
+            options["format"] = (
+                "bv*[height<=1080]+ba/b[height<=1080]"
+                "/bestvideo*+bestaudio/best"
+            )
         return options

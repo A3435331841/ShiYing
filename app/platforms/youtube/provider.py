@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from typing import Any
 
 from ...models import DownloadItem, Platform, UrlInfo
 from .._identify import UnsupportedUrlError, identify_url
@@ -96,23 +97,26 @@ class YouTubeProvider(PlatformProvider):
             ),
         )
 
-    def discover(self, target: UrlInfo, auth: SessionAuth) -> list[DownloadItem]:
+    def discover(
+        self,
+        target: UrlInfo,
+        auth: SessionAuth,
+        *,
+        should_cancel=None,
+    ) -> Any:
         """委托现有引擎展开单作品 / 播放列表 / 频道。
 
         Args:
             target: identify 阶段产出的标准 URL 信息。
             auth: 会话策略；当前仅用于说明，凭据由引擎按配置自行管理。
+            should_cancel: 可选的取消谓词。
 
         Returns:
-            引擎发现结果中的标准 DownloadItem 列表。
-
-        Raises:
-            DownloadCancelledError: 用户取消发现；由引擎抛出并向上传递。
+            引擎发现结果对象，保留作者、警告与完整性标记。
         """
-        result = self._resolve_engine().discover(
-            target.url, self.platform, target.kind
+        return self._resolve_engine().discover(
+            target.url, self.platform, target.kind, should_cancel=should_cancel
         )
-        return list(result.items)
 
     def probe_streams(
         self, item: DownloadItem, auth: SessionAuth

@@ -61,7 +61,8 @@ input.value = [
 """.replace("SOURCE", json.dumps(source, ensure_ascii=False), 1)
     path = tmp_path / "batch-test.js"
     path.write_text(script, encoding="utf-8")
-    result = subprocess.run([node, str(path)], capture_output=True, text=True, encoding="utf-8", timeout=15)
+    # Windows CI 上 Node 冷启动 + 全量测试并行时 15s 容易偶发超时，放宽到 45s。
+    result = subprocess.run([node, str(path)], capture_output=True, text=True, encoding="utf-8", timeout=45)
     assert result.returncode == 0, result.stderr
 
 
@@ -112,7 +113,8 @@ assert.strictEqual(calls.length, 0);
     script = script.replace("VIEWS_CODE", json.dumps(views_source, ensure_ascii=False)).replace("SOURCE_CODE", json.dumps(source, ensure_ascii=False))
     path = tmp_path / "removal-test.js"
     path.write_text(script, encoding="utf-8")
-    result = subprocess.run([node, str(path)], capture_output=True, text=True, encoding="utf-8", timeout=15)
+    # Windows CI 上 Node 冷启动 + 全量测试并行时 15s 容易偶发超时，放宽到 45s。
+    result = subprocess.run([node, str(path)], capture_output=True, text=True, encoding="utf-8", timeout=45)
     assert result.returncode == 0, result.stderr
 
 
@@ -168,7 +170,8 @@ assert(box.innerHTML.includes('无法识别 <strong>1</strong>'));
 """.replace("SOURCE", json.dumps(source, ensure_ascii=False), 1)
     path = tmp_path / "insights-test.js"
     path.write_text(script, encoding="utf-8")
-    result = subprocess.run([node, str(path)], capture_output=True, text=True, encoding="utf-8", timeout=15)
+    # Windows CI 上 Node 冷启动 + 全量测试并行时 15s 容易偶发超时，放宽到 45s。
+    result = subprocess.run([node, str(path)], capture_output=True, text=True, encoding="utf-8", timeout=45)
     assert result.returncode == 0, result.stderr
 
 
@@ -232,7 +235,8 @@ assert.strictEqual(button.textContent, '确认完全退出？');
 """.replace("SOURCE", json.dumps(source, ensure_ascii=False), 1)
     path = tmp_path / "exit-test.js"
     path.write_text(script, encoding="utf-8")
-    result = subprocess.run([node, str(path)], capture_output=True, text=True, encoding="utf-8", timeout=15)
+    # Windows CI 上 Node 冷启动 + 全量测试并行时 15s 容易偶发超时，放宽到 45s。
+    result = subprocess.run([node, str(path)], capture_output=True, text=True, encoding="utf-8", timeout=45)
     assert result.returncode == 0, result.stderr
 
 

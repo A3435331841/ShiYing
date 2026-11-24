@@ -466,7 +466,9 @@ def test_build_id_covers_the_desktop_launcher(tmp_path):
     (tmp_path / "run.py").write_text("a", encoding="utf-8")
     (tmp_path / "launch_shiying.py").write_text("a", encoding="utf-8")
     first = calculate_build_id(tmp_path)
-    (tmp_path / "launch_shiying.py").write_text("b", encoding="utf-8")
+    # Windows 的文件时间分辨率可能不足：写入等长内容后 mtime_ns 不变，
+    # 缓存会命中旧指纹。改成不同长度，确保 size 快照一定变化。
+    (tmp_path / "launch_shiying.py").write_text("bb", encoding="utf-8")
     second = calculate_build_id(tmp_path)
     assert first != second
 
